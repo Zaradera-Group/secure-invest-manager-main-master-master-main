@@ -45,7 +45,7 @@ function createMathChallenge(): MathChallenge {
 }
 
 export default function Login() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup'>(() => getLoginModeFromLocation());
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -67,6 +67,22 @@ export default function Login() {
     () => 'Access is restricted to approved internal email addresses only.',
     [],
   );
+  const isHumanVerificationPending = humanVerificationEnabled && !captchaToken;
+  const isMathVerificationPending =
+    mathChallengeEnabled && Number(mathAnswer.trim()) !== mathChallenge.answer;
+  const isSubmitDisabled = loading || isHumanVerificationPending || isMathVerificationPending;
+
+  const resetHumanVerification = () => {
+    setCaptchaToken(null);
+    setTurnstileStatus(null);
+  };
+
+  const handleModeChange = (nextMode: 'signin' | 'signup') => {
+    const nextUrl = new URL(globalThis.location.href);
+    nextUrl.pathname = '/login';
+    nextUrl.searchParams.set('mode', nextMode);
+    globalThis.location.assign(nextUrl.toString());
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,12 +170,16 @@ export default function Login() {
         title: 'Verification required',
         description: 'Your signup was accepted. Please verify your email before logging in.',
       });
-      setMode('signin');
-      setPassword('');
+      const nextUrl = new URL(globalThis.location.href);
+      nextUrl.pathname = '/login';
+      nextUrl.searchParams.set('mode', 'signin');
+      globalThis.location.assign(nextUrl.toString());
+      return;
     }
 
     setMathAnswer('');
     setMathChallenge(createMathChallenge());
+    resetHumanVerification();
     setLoading(false);
   };
 
@@ -189,7 +209,7 @@ export default function Login() {
             <div className="mx-auto mb-2 flex rounded-full bg-secondary p-1">
               <button
                 type="button"
-                onClick={() => setMode('signin')}
+                onClick={() => handleModeChange('signin')}
                 className={`rounded-full px-4 py-1.5 text-sm transition ${mode === 'signin' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground'}`}
               >
                 Sign In
@@ -197,7 +217,7 @@ export default function Login() {
               {signupEnabled && (
                 <button
                   type="button"
-                  onClick={() => setMode('signup')}
+                  onClick={() => handleModeChange('signup')}
                   className={`rounded-full px-4 py-1.5 text-sm transition ${mode === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground'}`}
                 >
                   Sign Up
@@ -285,12 +305,17 @@ export default function Login() {
                     placeholder="Enter your answer"
                     required={mathChallengeEnabled}
                   />
+                  {isMathVerificationPending && (
+                    <div className="rounded-lg border border-slate-300 bg-slate-50 p-3 text-xs text-slate-700">
+                      Solve the math problem correctly before {mode === 'signin' ? 'signing in' : 'creating your account'}.
+                    </div>
+                  )}
                 </div>
               )}
               <Button
                 type="submit"
                 className="w-full"
-                disabled={loading}
+                disabled={isSubmitDisabled}
               >
                 {loading ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
               </Button>
@@ -304,6 +329,11 @@ export default function Login() {
                 {turnstileStatus && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                     {turnstileStatus}
+                  </div>
+                )}
+                {isHumanVerificationPending && (
+                  <div className="rounded-lg border border-slate-300 bg-slate-50 p-3 text-xs text-slate-700">
+                    Complete the human verification before {mode === 'signin' ? 'signing in' : 'creating your account'}.
                   </div>
                 )}
               </div>
@@ -357,4 +387,9 @@ function deriveTurnstileServerMessage(
   }
 
   return data?.message ?? 'Human verification failed. Please try again.';
+}
+
+function getLoginModeFromLocation(): 'signin' | 'signup' {
+  const searchParams = new URLSearchParams(globalThis.location.search);
+  return searchParams.get('mode') === 'signup' ? 'signup' : 'signin';
 }

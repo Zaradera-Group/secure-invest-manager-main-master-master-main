@@ -10,6 +10,9 @@ declare global {
           callback: (token: string) => void;
           'expired-callback'?: () => void;
           'error-callback'?: (errorCode?: string) => void;
+          appearance?: 'always' | 'execute' | 'interaction-only';
+          execution?: 'render' | 'execute';
+          size?: 'normal' | 'flexible' | 'compact';
           theme?: 'light' | 'dark' | 'auto';
         },
       ) => string;
@@ -114,6 +117,9 @@ export function TurnstileWidget({
         onStatusChange?.(null);
         widgetIdRef.current = window.turnstile.render(containerRef.current, {
           sitekey: siteKey,
+          execution: 'render',
+          appearance: 'always',
+          size: 'normal',
           callback: (token) => {
             onToken(token);
             onStatusChange?.(null);
@@ -141,7 +147,7 @@ export function TurnstileWidget({
       }
       widgetIdRef.current = null;
     };
-  }, [onToken, siteKey]);
+  }, [onToken, onStatusChange, siteKey]);
 
   if (!siteKey) {
     return (

@@ -413,8 +413,8 @@ export function useCreateInvestor() {
         throw new Error('Your account does not have an assigned role yet. Please sign out and sign back in after the role setup is complete.');
       }
 
-      if (role !== 'admin') {
-        throw new Error('Only admin can add new investors.');
+      if (role !== 'admin' && role !== 'investment_manager') {
+        throw new Error('Only admin and investment manager can add new investors.');
       }
 
       const { data, error } = await supabase

@@ -29,7 +29,7 @@ export default function InvestorsList() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { role } = useAuth();
-  const canCreateInvestors = role === 'admin';
+  const canCreateInvestors = role === 'admin' || role === 'investment_manager';
   const deleteInvestor = useDeleteInvestor();
   const { data, isLoading } = useInvestorList({
     page,
