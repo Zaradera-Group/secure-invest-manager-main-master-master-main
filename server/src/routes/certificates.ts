@@ -14,7 +14,7 @@ export const certificatesRouter = Router();
 
 certificatesRouter.use(requireAuth);
 
-certificatesRouter.post("/create", requireRole("investment_manager", "super_admin", "admin"), createCertificate);
+certificatesRouter.post("/create", requireRole("investment_manager", "general_manager", "super_admin", "admin"), createCertificate);
 certificatesRouter.post("/:id/manager-approve", requireRole("investment_manager", "admin"), managerApprove);
 certificatesRouter.get("/:id/file", requireRole("investment_manager", "general_manager", "super_admin", "admin"), getCertificateFile);
 certificatesRouter.get("/:id/download", requireRole("investment_manager", "general_manager", "super_admin", "admin"), getCertificateDownloadUrl);
@@ -24,4 +24,4 @@ certificatesRouter.post(
   generalManagerApprove,
 );
 certificatesRouter.post("/:id/ceo-approve", requireRole("super_admin", "admin"), ceoApprove);
-certificatesRouter.post("/:id/send", requireRole("investment_manager", "admin"), sendCertificate);
+certificatesRouter.post("/:id/send", requireRole("investment_manager", "general_manager", "admin"), sendCertificate);

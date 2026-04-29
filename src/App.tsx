@@ -70,7 +70,7 @@ const AnimatedRoutes = () => {
           <Route path="/certificates/:id/view" element={<CertificateViewer />} />
           <Route path="/investors/:id" element={<InvestorDetail />} />
           <Route path="/investors/:id/edit" element={<ProtectedRoute allowedRoles={['investment_manager', 'admin']}><NewInvestment /></ProtectedRoute>} />
-          <Route path="/investments/new" element={<ProtectedRoute allowedRoles={['admin', 'investment_manager']}><NewInvestment /></ProtectedRoute>} />
+          <Route path="/investments/new" element={<NewInvestment />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settlement-discrepancies" element={<SettlementDiscrepancies />} />
           <Route path="/notification-audit" element={<ProtectedRoute allowedRoles={['admin', 'super_admin']}><NotificationAudit /></ProtectedRoute>} />

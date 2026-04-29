@@ -114,6 +114,8 @@ export class CertificatesService {
         ? "approved"
         : actor.role === "super_admin"
           ? "pending_ceo"
+          : actor.role === "general_manager"
+            ? "pending_general_manager"
           : "pending_manager";
 
     const { data, error } = await adminSupabase
@@ -146,8 +148,8 @@ export class CertificatesService {
       investorReferenceNumber: input.investorReferenceNumber ?? null,
     });
 
-    if (initialStatus === "pending_manager") {
-      await this.notifyStageUsers("pending_manager", refreshedCertificate);
+    if (initialStatus === "pending_manager" || initialStatus === "pending_general_manager" || initialStatus === "pending_ceo") {
+      await this.notifyStageUsers(initialStatus, refreshedCertificate);
     }
 
     await insertAuditLog({
@@ -170,19 +172,25 @@ export class CertificatesService {
   async managerApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
     const input = signatureSchema.parse(payload);
     const certificate = await this.getCertificate(certificateId);
+    const creatorRole = await this.getRoleForUser(certificate.created_by);
 
     if (certificate.status !== "pending_manager") {
       throw new Error("Certificate is not awaiting investment manager action");
     }
 
+    const nextStatus: CertificateStatus =
+      creatorRole === "general_manager"
+        ? "pending_ceo"
+        : "pending_general_manager";
+
     const updated = await this.updateCertificate(certificateId, {
       manager_signature: input.signature,
       manager_reviewed_by: actor.id,
-      status: "pending_general_manager",
+      status: nextStatus,
     });
 
     const refreshedCertificate = await this.persistPdf(updated);
-    await this.notifyStageUsers("pending_general_manager", refreshedCertificate);
+    await this.notifyStageUsers(nextStatus as Extract<CertificateStatus, "pending_general_manager" | "pending_ceo">, refreshedCertificate);
     await insertAuditLog({
       action: "certificate_signed_by_manager",
       actorUserId: actor.id,
@@ -198,19 +206,25 @@ export class CertificatesService {
   async generalManagerApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
     const input = signatureSchema.parse(payload);
     const certificate = await this.getCertificate(certificateId);
+    const creatorRole = await this.getRoleForUser(certificate.created_by);
 
     if (certificate.status !== "pending_general_manager") {
       throw new Error("Certificate is not awaiting general manager action");
     }
 
+    const nextStatus: CertificateStatus =
+      creatorRole === "general_manager"
+        ? "pending_manager"
+        : "pending_ceo";
+
     const updated = await this.updateCertificate(certificateId, {
       general_manager_signature: input.signature,
       general_manager_reviewed_by: actor.id,
-      status: "pending_ceo",
+      status: nextStatus,
     });
 
     const refreshedCertificate = await this.persistPdf(updated);
-    await this.notifyStageUsers("pending_ceo", refreshedCertificate);
+    await this.notifyStageUsers(nextStatus as Extract<CertificateStatus, "pending_manager" | "pending_ceo">, refreshedCertificate);
     await insertAuditLog({
       action: "certificate_signed_by_general_manager",
       actorUserId: actor.id,
@@ -226,6 +240,7 @@ export class CertificatesService {
   async ceoApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
     const input = optionalSignatureSchema.parse(payload);
     const certificate = await this.getCertificate(certificateId);
+    const creatorRole = await this.getRoleForUser(certificate.created_by);
 
     if (certificate.status !== "pending_ceo") {
       throw new Error("Certificate is not awaiting CEO approval");
@@ -306,7 +321,7 @@ export class CertificatesService {
         certificateId,
         message: `Certificate for ${refreshedCertificate.investor_name} has been approved and is ready to send to the investor.`,
         recipientUserId: refreshedCertificate.created_by,
-        userRole: "manager",
+        userRole: creatorRole === "general_manager" ? "general_manager" : "manager",
       });
     }
 
@@ -330,6 +345,14 @@ export class CertificatesService {
 
     if (certificate.status !== "approved") {
       throw new Error("Certificate must be approved before sending");
+    }
+
+    if (actor.role === "investment_manager" && certificate.created_by !== actor.id) {
+      throw new Error("Only the originating Investment Manager can send this certificate.");
+    }
+
+    if (actor.role === "general_manager" && certificate.created_by !== actor.id) {
+      throw new Error("Only the originating General Manager can send this certificate.");
     }
 
     const signedCertificateLink = await this.createInvestorCertificateEmailLink(certificate);
@@ -574,6 +597,25 @@ export class CertificatesService {
         email: user.email,
         phone: user.phone ?? undefined,
       }));
+  }
+
+  private async getRoleForUser(userId?: string | null): Promise<AppRole | null> {
+    if (!userId) {
+      return null;
+    }
+
+    const { data, error } = await adminSupabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch role for user ${userId}: ${error.message}`);
+    }
+
+    return (data?.role as AppRole | undefined) ?? null;
   }
 
   private async persistPdf(

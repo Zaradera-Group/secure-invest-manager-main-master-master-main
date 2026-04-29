@@ -30,7 +30,7 @@ const navItems: NavItem[] = [
   { id: 'admin-dashboard', icon: LayoutDashboard, label: 'Admin Dashboard', path: '/super-admin/dashboard', roles: ['admin', 'super_admin'] as const },
   { id: 'investors', icon: Users, label: 'Investors', path: '/investors' },
   { id: 'certificates', icon: BarChart3, label: 'Certificates', path: '/certificates' },
-  { id: 'new-investment', icon: PlusCircle, label: 'New Investment', path: '/investments/new', roles: ['admin', 'investment_manager'] as const },
+  { id: 'new-investment', icon: PlusCircle, label: 'New Investment', path: '/investments/new' },
   { id: 'notifications', icon: Bell, label: 'Notifications', path: '/notifications' },
   { id: 'reconciliation', icon: BarChart3, label: 'Reconciliation', path: '/settlement-discrepancies' },
   { id: 'notification-audit', icon: BarChart3, label: 'Notification Audit', path: '/notification-audit', roles: ['admin', 'super_admin'] as const },

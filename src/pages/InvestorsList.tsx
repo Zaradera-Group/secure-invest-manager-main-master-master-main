@@ -29,7 +29,7 @@ export default function InvestorsList() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { role } = useAuth();
-  const canCreateInvestors = role === 'admin' || role === 'investment_manager';
+  const canCreateInvestors = !!role;
   const deleteInvestor = useDeleteInvestor();
   const { data, isLoading } = useInvestorList({
     page,
@@ -179,7 +179,9 @@ export default function InvestorsList() {
           <h1 className="text-2xl font-heading font-bold">Investors</h1>
           <p className="text-muted-foreground text-sm mt-1">{totalCount} investor records</p>
           <p className="text-xs text-muted-foreground mt-1">
-            {role === 'admin' ? 'Admin can view every investor record.' : 'Staff dashboards only show investors created by the signed-in user.'}
+            {role === 'admin' || role === 'super_admin'
+              ? 'Executive dashboards can view every investor record and staff activity.'
+              : 'Your dashboard only shows investors created by your signed-in account.'}
           </p>
         </div>
         <div className="flex items-center gap-3">

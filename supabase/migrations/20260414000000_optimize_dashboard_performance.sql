@@ -216,9 +216,9 @@ as $$
         else investors.created_by = auth.uid()
       end
       -- Status filter
-      and (p_status_filter = 'all' or investors.liquidation_status = p_status_filter)
+      and (p_status_filter = 'all' or investors.liquidation_status::text = p_status_filter)
       -- Type filter
-      and (p_type_filter = 'all' or investors.investment_type = p_type_filter)
+      and (p_type_filter = 'all' or investors.investment_type::text = p_type_filter)
       -- Category filter
       and (p_category_filter = 'all' or investors.investor_category = p_category_filter)
       -- Search filter

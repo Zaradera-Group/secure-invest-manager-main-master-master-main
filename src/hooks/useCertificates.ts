@@ -310,7 +310,7 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
 
       const statusesByRole: Partial<Record<AppRole, WorkflowCertificateStatus[]>> = {
         investment_manager: ['pending_manager', 'approved'],
-        general_manager: ['pending_general_manager'],
+        general_manager: ['pending_general_manager', 'approved'],
         super_admin: ['pending_ceo'],
         admin: ['pending_manager', 'pending_general_manager', 'pending_ceo', 'approved'],
       };
@@ -327,9 +327,7 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
         .order('created_at', { ascending: false })
         .limit(6);
 
-      if (role === 'investment_manager' && user?.id) {
-        query = query.eq('created_by', user.id);
-      } else if (isExecutiveRole(role) && user?.id) {
+      if (isExecutiveRole(role) && user?.id) {
         if (scope === 'executive') {
           query = query.eq('created_by', user.id);
         } else if (scope === 'staff') {
@@ -341,7 +339,17 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
 
       if (error) throw error;
 
-      const certificateRows = (certificates ?? []) as unknown as WorkflowCertificate[];
+      let certificateRows = (certificates ?? []) as unknown as WorkflowCertificate[];
+      if (role === 'investment_manager' && user?.id) {
+        certificateRows = certificateRows.filter((certificate) =>
+          certificate.status === 'pending_manager' || certificate.created_by === user.id,
+        );
+      }
+      if (role === 'general_manager' && user?.id) {
+        certificateRows = certificateRows.filter((certificate) =>
+          certificate.status === 'pending_general_manager' || certificate.created_by === user.id,
+        );
+      }
       const investorEmails = [...new Set(certificateRows.map((certificate) => certificate.investor_email.toLowerCase()))];
       const { data: investors, error: investorError } = await supabase
         .from('investors')
@@ -390,7 +398,7 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
       if (role === 'investment_manager') {
         statusFilter = ['pending_manager', 'approved'];
       } else if (role === 'general_manager') {
-        statusFilter = ['pending_general_manager'];
+        statusFilter = ['pending_general_manager', 'approved'];
       } else if (role === 'admin') {
         statusFilter = ['pending_manager', 'pending_general_manager', 'pending_ceo', 'approved'];
       } else if (isExecutiveRole(role)) {
@@ -401,12 +409,10 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
 
       let query = supabase
         .from('certificates' as never)
-        .select('*', { count: 'exact', head: true })
+        .select('id,status,created_by')
         .in('status', statusFilter);
 
-      if (role === 'investment_manager' && user?.id) {
-        query = query.eq('created_by', user.id);
-      } else if (isExecutiveRole(role) && user?.id) {
+      if (isExecutiveRole(role) && user?.id) {
         if (scope === 'executive') {
           query = query.eq('created_by', user.id);
         } else if (scope === 'staff') {
@@ -414,10 +420,23 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
         }
       }
 
-      const { count, error } = await query;
+      const { data, error } = await query;
 
       if (error) throw error;
-      return count ?? 0;
+      const rows = ((data ?? []) as Array<{ id: string; status: WorkflowCertificateStatus; created_by?: string | null }>)
+        .filter((certificate) => {
+          if (role === 'investment_manager') {
+            return certificate.status === 'pending_manager' || certificate.created_by === user?.id;
+          }
+
+          if (role === 'general_manager') {
+            return certificate.status === 'pending_general_manager' || certificate.created_by === user?.id;
+          }
+
+          return true;
+        });
+
+      return rows.length;
     },
     refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
   });
@@ -521,6 +540,10 @@ function getNextActionLabel(role: AppRole, certificate: WorkflowCertificate) {
 
   if (role === 'general_manager' && certificate.status === 'pending_general_manager') {
     return 'Approve and sign';
+  }
+
+  if (role === 'general_manager' && certificate.status === 'approved') {
+    return 'Send to investor';
   }
 
   if (role === 'admin' && certificate.status === 'pending_general_manager') {

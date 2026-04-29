@@ -12,7 +12,19 @@ alter table public.notifications
 -- First, check if column exists and rename it
 do $$
 begin
-  if exists (select 1 from information_schema.columns where table_name = 'notifications' and column_name = 'read') then
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'notifications'
+      and column_name = 'read'
+  ) and not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'notifications'
+      and column_name = 'is_read'
+  ) then
     alter table public.notifications rename column read to is_read;
   end if;
 end $$;

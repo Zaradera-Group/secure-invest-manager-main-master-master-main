@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
@@ -71,6 +71,21 @@ export default function Login() {
   const isMathVerificationPending =
     mathChallengeEnabled && Number(mathAnswer.trim()) !== mathChallenge.answer;
   const isSubmitDisabled = loading || isHumanVerificationPending || isMathVerificationPending;
+
+  useEffect(() => {
+    const url = new URL(globalThis.location.href);
+    if (url.searchParams.get('signup') !== 'success') {
+      return;
+    }
+
+    toast({
+      title: 'Check your email',
+      description: 'Your signup was accepted. Please check your email for the login link and verify your account before signing in.',
+    });
+
+    url.searchParams.delete('signup');
+    globalThis.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [toast]);
 
   const resetHumanVerification = () => {
     setCaptchaToken(null);
@@ -166,13 +181,10 @@ export default function Login() {
       });
       navigate(getDefaultDashboardPath(role), { replace: true });
     } else if (mode === 'signup') {
-      toast({
-        title: 'Verification required',
-        description: 'Your signup was accepted. Please verify your email before logging in.',
-      });
       const nextUrl = new URL(globalThis.location.href);
       nextUrl.pathname = '/login';
       nextUrl.searchParams.set('mode', 'signin');
+      nextUrl.searchParams.set('signup', 'success');
       globalThis.location.assign(nextUrl.toString());
       return;
     }

@@ -15,6 +15,10 @@ type DashboardInvestorRow = Pick<
   'id' | 'name' | 'investment_amount' | 'maturity_date' | 'liquidation_status' | 'investment_type' | 'created_by' | 'currency_code'
 >;
 
+function isExecutiveInvestorRole(role: string | null | undefined) {
+  return role === 'admin' || role === 'super_admin';
+}
+
 const SELECTED_COLUMNS = 'id,name,email,phone,date_of_birth,gender,nin,bvn,address,next_of_kin_name,next_of_kin_phone,next_of_kin_relationship,passport_photo_url,currency_code,nin_verification_status,bvn_verification_status,verification_provider,last_verified_at,occupation,source_of_funds,reference_number,investment_amount,start_date,maturity_date,tenure,percentage,investment_type,expected_maturity_amount,client_account_number,client_bank,brought_by,investment_certificate_url,liquidation_status,investor_category,category_reference_name,category_reference_email,category_notes,created_at,updated_at,created_by';
 const INVESTOR_QUERY_KEYS = [
   ['investors'],
@@ -77,7 +81,7 @@ async function getDashboardInvestorBaseRows() {
 }
 
 async function getVisibleInvestorsForRole(role: string | null | undefined, userId?: string | null) {
-  if (role === 'admin') {
+  if (isExecutiveInvestorRole(role)) {
     const { data, error } = await supabase
       .from('investors')
       .select(SELECTED_COLUMNS)
@@ -104,9 +108,13 @@ async function getVisibleInvestorsForRole(role: string | null | undefined, userI
 async function getDashboardInvestorRows(scope: DashboardScope, role: string | null | undefined, userId?: string | null) {
   const investors = await getDashboardInvestorBaseRows();
 
-  if (role === 'admin') {
+  if (isExecutiveInvestorRole(role)) {
     if (scope === 'executive' && userId) {
       return investors.filter((investor) => investor.created_by === userId);
+    }
+
+    if (scope === 'staff' && userId) {
+      return investors.filter((investor) => investor.created_by !== userId);
     }
 
     return investors;
@@ -385,14 +393,21 @@ export function useInvestor(id: string | undefined) {
     queryKey: ['investors', id, role, user?.id],
     enabled: !!id,
     queryFn: async () => {
-      const visibleInvestors = await getVisibleInvestorsForRole(role, user?.id);
-      const investor = visibleInvestors.find((item) => item.id === id);
+      const { data, error } = await supabase
+        .from('investors')
+        .select(SELECTED_COLUMNS)
+        .eq('id', id)
+        .maybeSingle();
 
-      if (!investor) {
+      if (error) {
+        throw error;
+      }
+
+      if (!data) {
         throw new Error('Investor not found.');
       }
 
-      return investor;
+      return data as InvestorRow;
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000,
@@ -411,10 +426,6 @@ export function useCreateInvestor() {
 
       if (!role) {
         throw new Error('Your account does not have an assigned role yet. Please sign out and sign back in after the role setup is complete.');
-      }
-
-      if (role !== 'admin' && role !== 'investment_manager') {
-        throw new Error('Only admin and investment manager can add new investors.');
       }
 
       const { data, error } = await supabase

@@ -65,7 +65,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
 
     const actions: Array<{ action: CertificateAction; label: string; icon: typeof FileCheck2; requiresSignature?: boolean }> = [];
 
-    if (!certificate && (role === 'investment_manager' || isExecutiveRole(role))) {
+    if (!certificate && (role === 'investment_manager' || role === 'general_manager' || isExecutiveRole(role))) {
       actions.push({ action: 'generate', label: 'Create Certificate', icon: FileCheck2 });
     }
 
@@ -74,7 +74,12 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
     }
 
     if (role === 'investment_manager' && certificate?.status === 'pending_manager') {
-      actions.push({ action: 'approve_investment_manager', label: 'Sign and Submit to General Manager', icon: PenSquare, requiresSignature: true });
+      actions.push({
+        action: 'approve_investment_manager',
+        label: certificate.created_by === user?.id ? 'Sign and Submit to General Manager' : 'Sign and Submit to CEO',
+        icon: PenSquare,
+        requiresSignature: true,
+      });
     }
 
     if (role === 'admin' && certificate?.status === 'approved') {
@@ -85,12 +90,21 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
       actions.push({ action: 'send', label: 'Send Certificate to Investor', icon: CheckCircle2 });
     }
 
+    if (role === 'general_manager' && certificate?.status === 'approved' && certificate.created_by === user?.id) {
+      actions.push({ action: 'send', label: 'Send Certificate to Investor', icon: CheckCircle2 });
+    }
+
     if (role === 'admin' && certificate?.status === 'pending_general_manager') {
       actions.push({ action: 'approve_general_manager', label: 'Sign as General Manager', icon: PenSquare, requiresSignature: true });
     }
 
     if (role === 'general_manager' && certificate?.status === 'pending_general_manager') {
-      actions.push({ action: 'approve_general_manager', label: 'Sign and Submit to CEO', icon: PenSquare, requiresSignature: true });
+      actions.push({
+        action: 'approve_general_manager',
+        label: certificate.created_by === user?.id ? 'Sign and Submit to Investment Manager' : 'Sign and Submit to CEO',
+        icon: PenSquare,
+        requiresSignature: true,
+      });
     }
 
     if (isExecutiveRole(role) && certificate?.status === 'pending_ceo') {
@@ -103,7 +117,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
     }
 
     return actions;
-  }, [certificate, isDirectCeoFlow, role]);
+  }, [certificate, isDirectCeoFlow, role, user?.id]);
 
   const currentStepHelp = useMemo(() => {
     if (!certificate) {
@@ -111,7 +125,9 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
     }
 
     if (role === 'investment_manager' && certificate.status === 'pending_manager') {
-      return 'Add the Investment Manager signature, then submit it to the General Manager.';
+      return certificate.created_by === user?.id
+        ? 'Add the Investment Manager signature, then submit it to the General Manager.'
+        : 'Add the Investment Manager signature, then submit it to the CEO for final approval.';
     }
 
     if (role === 'admin' && certificate.status === 'pending_manager') {
@@ -129,7 +145,9 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
     }
 
     if (role === 'general_manager' && certificate.status === 'pending_general_manager') {
-      return 'Add the General Manager signature here, then submit it to the CEO for review.';
+      return certificate.created_by === user?.id
+        ? 'Add the General Manager signature here, then submit it to the Investment Manager for the next review stage.'
+        : 'Add the General Manager signature here, then submit it to the CEO for review.';
     }
 
     if (role === 'admin' && certificate.status === 'pending_general_manager') {
@@ -146,8 +164,12 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
       return 'The CEO has approved this certificate. Send it to the investor from here.';
     }
 
+    if (role === 'general_manager' && certificate.status === 'approved' && certificate.created_by === user?.id) {
+      return 'The CEO has approved this certificate. Send it directly to the investor from here.';
+    }
+
     return 'This certificate is waiting for the next workflow step.';
-  }, [certificate, isDirectCeoFlow, role]);
+  }, [certificate, isDirectCeoFlow, role, user?.id]);
 
   const runAction = async (action: CertificateAction, signature?: string | null) => {
     try {
@@ -345,7 +367,9 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
                 </Button>
                 {certificate && role === 'general_manager' && certificate.status === 'pending_general_manager' && (
                   <p className="text-blue-900 text-sm self-center">
-                    Review the certificate, then sign and submit it to the CEO.
+                    {certificate.created_by === user?.id
+                      ? 'Review the certificate, then sign and submit it to the Investment Manager.'
+                      : 'Review the certificate, then sign and submit it to the CEO.'}
                   </p>
                 )}
                 {latestCertificateUrl && role === 'investment_manager' && certificate?.status === 'approved' && (
@@ -503,7 +527,7 @@ function getDialogDescription(dialogAction: CertificateAction | null, isDirectCe
   if (dialogAction === 'approve_ceo') {
     return isDirectCeoFlow
       ? 'Add the CEO signature and send this certificate directly to the investor.'
-      : 'Review the certificate and approve it so it returns to the Investment Manager for final sending.';
+      : 'Review the certificate and approve it so it returns to the originating owner for final sending.';
   }
 
   return 'Add the required signature and continue the workflow.';
