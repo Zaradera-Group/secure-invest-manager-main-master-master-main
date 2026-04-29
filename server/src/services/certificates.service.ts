@@ -1,0 +1,846 @@
+import { z } from "zod";
+import { adminSupabase } from "../lib/supabase.js";
+import {
+  sendCeoNotificationEmail,
+  sendGeneralManagerNotificationEmail,
+  sendInvestorCertificateEmail,
+  sendManagerNotificationEmail,
+} from "../lib/email.js";
+import { generateCertificatePdf, uploadCertificatePdf } from "../lib/pdf.js";
+import {
+  sendCeoNotificationSms,
+  sendGeneralManagerNotificationSms,
+  sendInvestorCertificateSms,
+  sendManagerNotificationSms,
+} from "../lib/sms.js";
+import { insertAuditLog } from "../lib/audit.js";
+import { env } from "../config/env.js";
+import type {
+  AppRole,
+  AuthenticatedUser,
+  CertificateRecord,
+  CertificateSignatoryNames,
+  CertificateStatus,
+} from "../types/certificates.js";
+
+const createCertificateSchema = z.object({
+  investorId: z.string().uuid().optional(),
+  investorName: z.string().min(1),
+  investorEmail: z.string().email(),
+  investorPhone: z.string().optional(),
+  investorReferenceNumber: z.coerce.number().int().nonnegative().optional(),
+  amount: z.coerce.number().nonnegative(),
+  currencyCode: z.string().min(3).max(3).default("NGN"),
+  interestRate: z.coerce.number().nonnegative(),
+  investmentType: z.enum(["Upfront", "Monthly", "Quarterly", "At Maturity"]).optional(),
+  issueDate: z.string().optional(),
+  investmentTenure: z.string().optional(),
+  principalMaturityDate: z.string().optional(),
+  interestPayment: z.string().optional(),
+});
+
+const signatureSchema = z.object({
+  signature: z.string().min(1),
+});
+
+const optionalSignatureSchema = z.object({
+  signature: z.string().min(1).nullable().optional(),
+});
+
+const parseTenureMonths = (investmentTenure?: string) => {
+  if (!investmentTenure) {
+    return 0;
+  }
+
+  const match = /(\d+(?:\.\d+)?)/.exec(investmentTenure);
+  return match ? Number.parseFloat(match[1]) : 0;
+};
+
+const calculateInterestPayment = (amount: number, interestRate: number, investmentTenure?: string) => {
+  const tenureMonths = parseTenureMonths(investmentTenure);
+  return amount * (interestRate / 100) * tenureMonths;
+};
+
+const buildInterestPaymentDescription = (
+  amount: number,
+  interestRate: number,
+  investmentTenure?: string,
+  investmentType?: "Upfront" | "Monthly" | "Quarterly" | "At Maturity",
+) => {
+  const tenureMonths = parseTenureMonths(investmentTenure);
+  const monthlyReturn = amount * (interestRate / 100);
+  const totalReturn = monthlyReturn * tenureMonths;
+
+  switch (investmentType) {
+    case "Upfront":
+      return `Upfront interest payment of ${totalReturn.toFixed(2)} for ${tenureMonths} month(s)`;
+    case "Monthly":
+      return `Monthly interest payment of ${monthlyReturn.toFixed(2)} for ${tenureMonths} month(s)`;
+    case "Quarterly":
+      return `Quarterly interest payment of ${(monthlyReturn * 3).toFixed(2)} every 3 months across ${tenureMonths} month(s)`;
+    case "At Maturity":
+      return `Interest paid at maturity: ${totalReturn.toFixed(2)} after ${tenureMonths} month(s)`;
+    default:
+      return totalReturn.toFixed(2);
+  }
+};
+
+const stageConfig: Record<
+  Extract<CertificateStatus, "pending_manager" | "pending_general_manager" | "pending_ceo">,
+  { userRole: "manager" | "general_manager" | "ceo"; appRole: AppRole }
+> = {
+  pending_manager: { userRole: "manager", appRole: "investment_manager" },
+  pending_general_manager: { userRole: "general_manager", appRole: "general_manager" },
+  pending_ceo: { userRole: "ceo", appRole: "super_admin" },
+};
+
+export class CertificatesService {
+  async createCertificate(actor: AuthenticatedUser, payload: unknown) {
+    const input = createCertificateSchema.parse(payload);
+    const calculatedInterestPayment = calculateInterestPayment(
+      input.amount,
+      input.interestRate,
+      input.investmentTenure,
+    );
+    const interestPaymentDescription = input.interestPayment?.trim()
+      || buildInterestPaymentDescription(
+        input.amount,
+        input.interestRate,
+        input.investmentTenure,
+        input.investmentType,
+      );
+    const initialStatus: CertificateStatus =
+      actor.role === "admin"
+        ? "approved"
+        : actor.role === "super_admin"
+          ? "pending_ceo"
+          : "pending_manager";
+
+    const { data, error } = await adminSupabase
+      .from("certificates")
+      .insert({
+        investor_name: input.investorName,
+        investor_email: input.investorEmail,
+        investor_phone: input.investorPhone ?? null,
+        amount: input.amount,
+        currency_code: input.currencyCode,
+        interest_rate: input.interestRate,
+        issue_date: input.issueDate ?? null,
+        investment_tenure: input.investmentTenure ?? null,
+        principal_maturity_date: input.principalMaturityDate ?? null,
+        interest_payment: interestPaymentDescription,
+        approved_at: actor.role === "admin" ? new Date().toISOString() : null,
+        ceo_approved_by: actor.role === "admin" ? actor.id : null,
+        status: initialStatus,
+        created_by: actor.id,
+      })
+      .select("*")
+      .single<CertificateRecord>();
+
+    if (error || !data) {
+      throw new Error(`Failed to create certificate: ${error?.message ?? "Unknown error"}`);
+    }
+
+    const refreshedCertificate = await this.persistPdf(data, {
+      investorId: input.investorId,
+      investorReferenceNumber: input.investorReferenceNumber ?? null,
+    });
+
+    if (initialStatus === "pending_manager") {
+      await this.notifyStageUsers("pending_manager", refreshedCertificate);
+    }
+
+    await insertAuditLog({
+      action: "certificate_created",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId: refreshedCertificate.id,
+      targetEmail: refreshedCertificate.investor_email,
+      metadata: {
+        initialStatus,
+        investmentType: input.investmentType ?? null,
+        calculatedInterestPayment,
+      },
+    });
+
+    return refreshedCertificate;
+  }
+
+  async managerApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
+    const input = signatureSchema.parse(payload);
+    const certificate = await this.getCertificate(certificateId);
+
+    if (certificate.status !== "pending_manager") {
+      throw new Error("Certificate is not awaiting investment manager action");
+    }
+
+    const updated = await this.updateCertificate(certificateId, {
+      manager_signature: input.signature,
+      manager_reviewed_by: actor.id,
+      status: "pending_general_manager",
+    });
+
+    const refreshedCertificate = await this.persistPdf(updated);
+    await this.notifyStageUsers("pending_general_manager", refreshedCertificate);
+    await insertAuditLog({
+      action: "certificate_signed_by_manager",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId: refreshedCertificate.id,
+      targetEmail: refreshedCertificate.investor_email,
+    });
+
+    return refreshedCertificate;
+  }
+
+  async generalManagerApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
+    const input = signatureSchema.parse(payload);
+    const certificate = await this.getCertificate(certificateId);
+
+    if (certificate.status !== "pending_general_manager") {
+      throw new Error("Certificate is not awaiting general manager action");
+    }
+
+    const updated = await this.updateCertificate(certificateId, {
+      general_manager_signature: input.signature,
+      general_manager_reviewed_by: actor.id,
+      status: "pending_ceo",
+    });
+
+    const refreshedCertificate = await this.persistPdf(updated);
+    await this.notifyStageUsers("pending_ceo", refreshedCertificate);
+    await insertAuditLog({
+      action: "certificate_signed_by_general_manager",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId: refreshedCertificate.id,
+      targetEmail: refreshedCertificate.investor_email,
+    });
+
+    return refreshedCertificate;
+  }
+
+  async ceoApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
+    const input = optionalSignatureSchema.parse(payload);
+    const certificate = await this.getCertificate(certificateId);
+
+    if (certificate.status !== "pending_ceo") {
+      throw new Error("Certificate is not awaiting CEO approval");
+    }
+
+    const isDirectCeoFlow = certificate.created_by === actor.id;
+
+    if (isDirectCeoFlow && !input.signature) {
+      throw new Error("CEO signature is required before sending this certificate to the investor");
+    }
+
+    const approvedCertificate = await this.updateCertificate(certificateId, {
+      ceo_signature: input.signature ?? certificate.ceo_signature,
+      ceo_approved_by: actor.id,
+      approved_at: new Date().toISOString(),
+      status: "approved",
+    });
+
+    const refreshedCertificate = await this.persistPdf(approvedCertificate);
+
+    if (isDirectCeoFlow) {
+      const signedCertificateLink = await this.createInvestorCertificateEmailLink(refreshedCertificate);
+      await sendInvestorCertificateEmail(
+        refreshedCertificate.investor_email,
+        refreshedCertificate,
+        signedCertificateLink,
+      );
+      if (refreshedCertificate.investor_phone) {
+        await sendInvestorCertificateSms(
+          refreshedCertificate.investor_phone,
+          refreshedCertificate,
+          signedCertificateLink,
+        );
+      }
+
+      const sentCertificate = await this.updateCertificate(certificateId, {
+        sent_at: new Date().toISOString(),
+        sent_by: actor.id,
+        status: "sent",
+      });
+
+      await this.insertNotification({
+        certificateId,
+        message: `Your certificate for ${refreshedCertificate.investor_name} is ready.`,
+        recipientEmail: refreshedCertificate.investor_email,
+        userRole: "investor",
+      });
+
+      await insertAuditLog({
+        action: "certificate_approved_by_ceo",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId,
+        targetEmail: refreshedCertificate.investor_email,
+        metadata: {
+          directCeoFlow: true,
+        },
+      });
+
+      await insertAuditLog({
+        action: "certificate_sent_to_investor",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId,
+        targetEmail: refreshedCertificate.investor_email,
+        metadata: {
+          directCeoFlow: true,
+        },
+      });
+
+      return sentCertificate;
+    }
+
+    if (refreshedCertificate.created_by) {
+      await this.insertNotification({
+        certificateId,
+        message: `Certificate for ${refreshedCertificate.investor_name} has been approved and is ready to send to the investor.`,
+        recipientUserId: refreshedCertificate.created_by,
+        userRole: "manager",
+      });
+    }
+
+    await insertAuditLog({
+      action: "certificate_approved_by_ceo",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId,
+      targetEmail: refreshedCertificate.investor_email,
+      metadata: {
+        directCeoFlow: false,
+      },
+    });
+
+    return refreshedCertificate;
+  }
+
+  async sendCertificate(certificateId: string, actor: AuthenticatedUser) {
+    const certificate = await this.getCertificate(certificateId);
+
+    if (certificate.status !== "approved") {
+      throw new Error("Certificate must be approved before sending");
+    }
+
+    const signedCertificateLink = await this.createInvestorCertificateEmailLink(certificate);
+    await sendInvestorCertificateEmail(certificate.investor_email, certificate, signedCertificateLink);
+    if (certificate.investor_phone) {
+      await sendInvestorCertificateSms(certificate.investor_phone, certificate, signedCertificateLink);
+    }
+    const sentCertificate = await this.updateCertificate(certificateId, {
+      sent_at: new Date().toISOString(),
+      sent_by: actor.id,
+      status: "sent",
+    });
+
+    await this.insertNotification({
+      certificateId,
+      message: `Your certificate for ${certificate.investor_name} is ready.`,
+      recipientEmail: certificate.investor_email,
+      userRole: "investor",
+    });
+
+    await insertAuditLog({
+      action: "certificate_sent_to_investor",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId,
+      targetEmail: certificate.investor_email,
+      metadata: {
+        directCeoFlow: false,
+      },
+    });
+
+    return sentCertificate;
+  }
+
+  async createDownloadUrl(certificateId: string, actor: AuthenticatedUser) {
+    let certificate = await this.getCertificate(certificateId);
+    await this.assertCertificateAccess(certificate, actor);
+
+    certificate = await this.ensureCertificateFile(certificate);
+    const storagePath = await this.getCertificateStoragePath(certificate);
+
+    const { data, error } = await adminSupabase.storage
+      .from(env.CERTIFICATE_STORAGE_BUCKET)
+      .createSignedUrl(storagePath, 60 * 10);
+
+    if (error || !data?.signedUrl) {
+      throw new Error(`Failed to create certificate download url: ${error?.message ?? "Unknown error"}`);
+    }
+
+    await insertAuditLog({
+      action: "certificate_download_link_generated",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId,
+      targetEmail: certificate.investor_email,
+    });
+
+    return { signedUrl: data.signedUrl };
+  }
+
+  async getCertificatePdfFile(certificateId: string, actor: AuthenticatedUser) {
+    let certificate = await this.getCertificate(certificateId);
+    await this.assertCertificateAccess(certificate, actor);
+
+    certificate = await this.ensureCertificateFile(certificate);
+    const storagePath = await this.getCertificateStoragePath(certificate);
+
+    const { data, error } = await adminSupabase.storage
+      .from(env.CERTIFICATE_STORAGE_BUCKET)
+      .download(storagePath);
+
+    if (error || !data) {
+      certificate = await this.persistPdf(certificate);
+      const retryPath = await this.getCertificateStoragePath(certificate);
+      const retry = await adminSupabase.storage
+        .from(env.CERTIFICATE_STORAGE_BUCKET)
+        .download(retryPath);
+
+      if (retry.error || !retry.data) {
+        throw new Error(`Failed to download certificate PDF: ${retry.error?.message ?? "Unknown error"}`);
+      }
+
+      await insertAuditLog({
+        action: "certificate_download_link_generated",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId,
+        targetEmail: certificate.investor_email,
+        metadata: {
+          deliveryMode: "direct_file",
+          retried: true,
+        },
+      });
+
+      return {
+        fileName: `${certificate.investor_name.replace(/\s+/g, "-").toLowerCase()}-certificate.pdf`,
+        bytes: Buffer.from(await retry.data.arrayBuffer()),
+      };
+    }
+
+    await insertAuditLog({
+      action: "certificate_download_link_generated",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId,
+      targetEmail: certificate.investor_email,
+      metadata: {
+        deliveryMode: "direct_file",
+      },
+    });
+
+    return {
+      fileName: `${certificate.investor_name.replace(/\s+/g, "-").toLowerCase()}-certificate.pdf`,
+      bytes: Buffer.from(await data.arrayBuffer()),
+    };
+  }
+
+  private async ensureCertificateFile(certificate: CertificateRecord) {
+    if (certificate.certificate_url) {
+      return certificate;
+    }
+
+    return this.persistPdf(certificate);
+  }
+
+  private async notifyStageUsers(
+    status: Extract<CertificateStatus, "pending_manager" | "pending_general_manager" | "pending_ceo">,
+    certificate: CertificateRecord,
+  ) {
+    const stage = stageConfig[status];
+    const recipients = await this.getUsersByRole(stage.appRole);
+    const investorActionPath = await this.getInvestorActionPath(certificate);
+
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        const message = this.buildNotificationMessage(status, certificate);
+
+        await this.insertNotification({
+          certificateId: certificate.id,
+          message,
+          recipientUserId: recipient.id,
+          recipientEmail: recipient.email,
+          userRole: stage.userRole,
+          actionPath: investorActionPath,
+        });
+
+        if (!recipient.email) {
+          return;
+        }
+
+        if (status === "pending_manager") {
+          await sendManagerNotificationEmail(recipient.email, certificate);
+        } else if (status === "pending_general_manager") {
+          await sendGeneralManagerNotificationEmail(recipient.email, certificate);
+        } else {
+          await sendCeoNotificationEmail(recipient.email, certificate);
+        }
+
+        if (!recipient.phone) {
+          return;
+        }
+
+        if (status === "pending_manager") {
+          await sendManagerNotificationSms(recipient.phone, certificate);
+        } else if (status === "pending_general_manager") {
+          await sendGeneralManagerNotificationSms(recipient.phone, certificate);
+        } else {
+          await sendCeoNotificationSms(recipient.phone, certificate);
+        }
+      }),
+    );
+  }
+
+  private buildNotificationMessage(status: CertificateStatus, certificate: CertificateRecord) {
+    switch (status) {
+      case "pending_manager":
+        return `Certificate for ${certificate.investor_name} is ready for investment manager review.`;
+      case "pending_general_manager":
+        return `Certificate for ${certificate.investor_name} is ready for general manager review.`;
+      case "pending_ceo":
+        return `Certificate for ${certificate.investor_name} is ready for CEO approval.`;
+      default:
+        return `Certificate for ${certificate.investor_name} has changed status.`;
+    }
+  }
+
+  private async insertNotification(input: {
+    certificateId: string;
+    message: string;
+    userRole: "manager" | "general_manager" | "ceo" | "investor";
+    recipientUserId?: string;
+    recipientEmail?: string;
+    actionPath?: string | null;
+  }) {
+    const { error } = await adminSupabase.from("notifications").insert({
+      certificate_id: input.certificateId,
+      title: "Certificate workflow update",
+      detail: input.message,
+      message: input.message,
+      user_role: input.userRole,
+      recipient_user_id: input.recipientUserId ?? null,
+      recipient_email: input.recipientEmail ?? null,
+      action_path: input.actionPath ?? null,
+      is_read: false,
+    });
+
+    if (error) {
+      throw new Error(`Failed to insert notification: ${error.message}`);
+    }
+  }
+
+  private async getUsersByRole(role: AppRole) {
+    const { data, error } = await adminSupabase
+      .from("user_roles")
+      .select("user_id")
+      .eq("role", role);
+
+    if (error) {
+      throw new Error(`Failed to fetch users for role ${role}: ${error.message}`);
+    }
+
+    const userIds = (data ?? []).map((row) => row.user_id as string);
+
+    if (userIds.length === 0) {
+      return [];
+    }
+
+    const { data: authUsers, error: usersError } = await adminSupabase.auth.admin.listUsers();
+
+    if (usersError) {
+      throw new Error(`Failed to fetch auth users for role ${role}: ${usersError.message}`);
+    }
+
+    return (authUsers.users ?? [])
+      .filter((user) => userIds.includes(user.id))
+      .map((user) => ({
+        id: user.id,
+        email: user.email,
+        phone: user.phone ?? undefined,
+      }));
+  }
+
+  private async persistPdf(
+    certificate: CertificateRecord,
+    investorContext?: {
+      investorId?: string;
+      investorReferenceNumber?: number | null;
+    },
+  ) {
+    const signatories = await this.getSignatoryNames();
+    const investorSnapshot = await this.getInvestorSnapshot(certificate, investorContext);
+    const pdfBytes = await generateCertificatePdf(
+      {
+        ...certificate,
+        investor_name: investorSnapshot.name,
+        investor_email: investorSnapshot.email,
+        investor_phone: investorSnapshot.phone,
+        amount: investorSnapshot.amount,
+        currency_code: investorSnapshot.currencyCode,
+        interest_rate: investorSnapshot.interestRate,
+        investment_tenure: investorSnapshot.investmentTenure,
+        principal_maturity_date: investorSnapshot.principalMaturityDate,
+        interest_payment: investorSnapshot.interestPayment ?? certificate.interest_payment,
+        investor_reference_number: investorSnapshot.referenceNumber,
+      },
+      signatories,
+    );
+    const certificateUrl = await uploadCertificatePdf(certificate.id, pdfBytes);
+
+    return this.updateCertificate(certificate.id, { certificate_url: certificateUrl });
+  }
+
+  private async getInvestorSnapshot(
+    certificate: CertificateRecord,
+    investorContext?: {
+      investorId?: string;
+      investorReferenceNumber?: number | null;
+    },
+  ) {
+    let query = adminSupabase
+      .from("investors")
+      .select("name, email, phone, reference_number, investment_amount, currency_code, percentage, tenure, maturity_date, investment_type");
+
+    if (investorContext?.investorId) {
+      query = query.eq("id", investorContext.investorId);
+    } else {
+      query = query
+        .eq("email", certificate.investor_email)
+        .eq("name", certificate.investor_name);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch investor details: ${error.message}`);
+    }
+
+    const amount = Number(data?.investment_amount ?? certificate.amount);
+    const interestRate = Number(data?.percentage ?? certificate.interest_rate);
+    const investmentTenure = data?.tenure ? `${data.tenure} months` : (certificate.investment_tenure ?? null);
+    const principalMaturityDate = data?.maturity_date ?? certificate.principal_maturity_date ?? null;
+    const referenceNumber =
+      typeof investorContext?.investorReferenceNumber === "number"
+        ? investorContext.investorReferenceNumber
+        : (data?.reference_number ?? certificate.investor_reference_number ?? null);
+    const interestPayment = this.buildInterestPaymentFromSnapshot(
+      amount,
+      interestRate,
+      investmentTenure,
+      data?.investment_type ?? undefined,
+      certificate.interest_payment ?? null,
+    );
+
+    return {
+      name: data?.name ?? certificate.investor_name,
+      email: data?.email ?? certificate.investor_email,
+      phone: data?.phone ?? certificate.investor_phone ?? null,
+      amount,
+      currencyCode: data?.currency_code ?? certificate.currency_code ?? "NGN",
+      interestRate,
+      investmentTenure,
+      principalMaturityDate,
+      referenceNumber,
+      interestPayment,
+    };
+  }
+
+  private buildInterestPaymentFromSnapshot(
+    amount: number,
+    interestRate: number,
+    investmentTenure?: string | null,
+    investmentType?: "Upfront" | "Monthly" | "Quarterly" | "At Maturity",
+    fallback?: string | null,
+  ) {
+    const derived = buildInterestPaymentDescription(
+      amount,
+      interestRate,
+      investmentTenure ?? undefined,
+      investmentType,
+    ).trim();
+
+    return derived || fallback || null;
+  }
+
+  private async createInvestorCertificateEmailLink(certificate: CertificateRecord) {
+    const storagePath = await this.getCertificateStoragePath(certificate);
+
+    const { data, error } = await adminSupabase.storage
+      .from(env.CERTIFICATE_STORAGE_BUCKET)
+      .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+
+    if (error || !data?.signedUrl) {
+      throw new Error(`Failed to create investor certificate link: ${error?.message ?? "Unknown error"}`);
+    }
+
+    return data.signedUrl;
+  }
+
+  private async getCertificateStoragePath(certificate: CertificateRecord): Promise<string> {
+    const certificateUrl = certificate.certificate_url?.trim();
+    if (!certificateUrl) {
+      const refreshed = await this.persistPdf(certificate);
+      return this.getCertificateStoragePath(refreshed);
+    }
+
+    const directPath = this.extractStoragePath(certificateUrl);
+    if (directPath) {
+      if (directPath !== certificateUrl) {
+        await this.updateCertificate(certificate.id, { certificate_url: directPath });
+      }
+      return directPath;
+    }
+
+    const refreshed = await this.persistPdf(certificate);
+    const refreshedPath = refreshed.certificate_url?.trim();
+    const normalizedRefreshedPath = refreshedPath ? this.extractStoragePath(refreshedPath) : null;
+
+    if (!normalizedRefreshedPath) {
+      throw new Error("Certificate file is not available");
+    }
+
+    return normalizedRefreshedPath;
+  }
+
+  private extractStoragePath(value: string): string | null {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    if (!/^https?:\/\//i.test(trimmed)) {
+      return trimmed.replace(/^\/+/, "");
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      const markers = [
+        `/storage/v1/object/public/${env.CERTIFICATE_STORAGE_BUCKET}/`,
+        `/storage/v1/object/sign/${env.CERTIFICATE_STORAGE_BUCKET}/`,
+        `/storage/v1/object/authenticated/${env.CERTIFICATE_STORAGE_BUCKET}/`,
+        `/storage/v1/object/${env.CERTIFICATE_STORAGE_BUCKET}/`,
+      ];
+
+      for (const marker of markers) {
+        const index = parsed.pathname.indexOf(marker);
+        if (index >= 0) {
+          return decodeURIComponent(parsed.pathname.slice(index + marker.length));
+        }
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  private async getSignatoryNames(): Promise<CertificateSignatoryNames> {
+    return {
+      investmentManager: await this.getDisplayNameForRole("investment_manager", "Investment Manager"),
+      generalManager: await this.getDisplayNameForRole("general_manager", "General Manager"),
+      ceo: await this.getDisplayNameForRole("super_admin", "CEO"),
+    };
+  }
+
+  private async getDisplayNameForRole(role: AppRole, fallback: string) {
+    const { data, error } = await adminSupabase
+      .from("user_roles")
+      .select("user_id")
+      .eq("role", role)
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data?.user_id) {
+      return fallback;
+    }
+
+    const { data: profile } = await adminSupabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", data.user_id)
+      .maybeSingle();
+
+    if (profile?.full_name?.trim()) {
+      return profile.full_name.trim();
+    }
+
+    const { data: authUser } = await adminSupabase.auth.admin.getUserById(data.user_id);
+    return authUser.user?.email ?? fallback;
+  }
+
+  private async getCertificate(certificateId: string) {
+    const { data, error } = await adminSupabase
+      .from("certificates")
+      .select("*")
+      .eq("id", certificateId)
+      .single<CertificateRecord>();
+
+    if (error || !data) {
+      throw new Error(`Certificate not found: ${error?.message ?? certificateId}`);
+    }
+
+    return data;
+  }
+
+  private async getInvestorActionPath(certificate: CertificateRecord) {
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .select("id")
+      .eq("email", certificate.investor_email)
+      .eq("name", certificate.investor_name)
+      .maybeSingle();
+
+    if (error || !data?.id) {
+      return "/investors";
+    }
+
+    return `/investors/${data.id}`;
+  }
+
+  private async assertCertificateAccess(certificate: CertificateRecord, actor: AuthenticatedUser) {
+    switch (actor.role) {
+      case "super_admin":
+      case "admin":
+      case "general_manager":
+      case "investment_manager":
+        return;
+      default:
+        throw new Error("Forbidden for current role");
+    }
+  }
+
+  private async updateCertificate(
+    certificateId: string,
+    updates: Partial<CertificateRecord> & Record<string, unknown>,
+  ) {
+    const { data, error } = await adminSupabase
+      .from("certificates")
+      .update(updates)
+      .eq("id", certificateId)
+      .select("*")
+      .single<CertificateRecord>();
+
+    if (error || !data) {
+      throw new Error(`Failed to update certificate: ${error?.message ?? "Unknown error"}`);
+    }
+
+    return data;
+  }
+}
