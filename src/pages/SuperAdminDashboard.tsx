@@ -4,9 +4,43 @@ import { Link } from 'react-router-dom';
 import Dashboard from './Dashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import type { Database } from '@/integrations/supabase/types';
 import { supabase } from '@/integrations/supabase/client';
 
 export default function SuperAdminDashboard() {
+  const { data: creatorDirectory = new Map<string, { displayName: string; roleLabel: string }>() } = useQuery({
+    queryKey: ['super-admin-creator-directory'],
+    queryFn: async () => {
+      const [profilesResult, rolesResult] = await Promise.all([
+        supabase.from('profiles').select('id, full_name'),
+        supabase.from('user_roles').select('user_id, role'),
+      ]);
+
+      if (profilesResult.error) throw profilesResult.error;
+      if (rolesResult.error) throw rolesResult.error;
+
+      const profileMap = new Map(
+        ((profilesResult.data ?? []) as Pick<Database['public']['Tables']['profiles']['Row'], 'id' | 'full_name'>[])
+          .map((profile) => [profile.id, profile.full_name?.trim() || null]),
+      );
+
+      return new Map(
+        ((rolesResult.data ?? []) as Pick<Database['public']['Tables']['user_roles']['Row'], 'user_id' | 'role'>[])
+          .map((roleRow) => {
+            const roleLabel = formatRoleLabel(roleRow.role);
+            const fullName = profileMap.get(roleRow.user_id);
+
+            return [
+              roleRow.user_id,
+              {
+                displayName: fullName || roleLabel,
+                roleLabel,
+              },
+            ];
+          }),
+      );
+    },
+  });
   const { data: roleCounts = {} as Record<string, number> } = useQuery<Record<string, number>>({
     queryKey: ['super-admin-role-counts'],
     queryFn: async () => {
@@ -114,7 +148,7 @@ export default function SuperAdminDashboard() {
               <div>
                 <p className="text-sm font-medium">{activity.investorName}</p>
                 <p className="text-xs text-muted-foreground">
-                  {humanizeAuditAction(activity.action)} by {activity.user_id ?? 'unknown user'} on {formatAuditTimestamp(activity.created_at)}
+                  {humanizeAuditAction(activity.action)} by {formatActorLabel(activity.user_id, creatorDirectory)} on {formatAuditTimestamp(activity.created_at)}
                 </p>
                 {activity.record_id && (
                   <Link to={`/investors/${activity.record_id}`} className="text-xs text-accent hover:underline">
@@ -135,6 +169,45 @@ export default function SuperAdminDashboard() {
       />
     </div>
   );
+}
+
+function formatRoleLabel(role: string | null | undefined) {
+  switch (role) {
+    case 'investment_manager':
+      return 'Investment Manager';
+    case 'general_manager':
+      return 'General Manager';
+    case 'admin':
+      return 'IT Manager';
+    case 'super_admin':
+      return 'CEO';
+    case 'software_engineer':
+      return 'Software Engineer';
+    case 'staff':
+      return 'Staff';
+    default:
+      return 'Staff';
+  }
+}
+
+function formatActorLabel(
+  userId: string | null,
+  creatorDirectory: Map<string, { displayName: string; roleLabel: string }>,
+) {
+  if (!userId) {
+    return 'unknown user';
+  }
+
+  const actor = creatorDirectory.get(userId);
+  if (!actor) {
+    return 'staff member';
+  }
+
+  if (actor.displayName === actor.roleLabel) {
+    return actor.roleLabel;
+  }
+
+  return `${actor.displayName} (${actor.roleLabel})`;
 }
 
 function humanizeAuditAction(action: string) {

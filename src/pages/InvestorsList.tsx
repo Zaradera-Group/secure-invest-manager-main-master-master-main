@@ -42,6 +42,8 @@ export default function InvestorsList() {
   const investors = data?.data ?? [];
   const totalCount = data?.count ?? 0;
   const canDeleteInvestors = role === 'investment_manager' || role === 'general_manager' || role === 'admin' || role === 'super_admin';
+  const isExecutiveViewer = role === 'admin' || role === 'super_admin';
+  const emptyStateColSpan = (isExecutiveViewer ? 12 : 11) + (canDeleteInvestors ? 1 : 0);
 
   // Update URL when search changes
   useEffect(() => {
@@ -86,6 +88,8 @@ export default function InvestorsList() {
         'Name',
         'Email',
         'Phone',
+        'Created By',
+        'Creator Role',
         'Investment Amount',
         'Expected Maturity Amount',
         'Investment Type',
@@ -103,6 +107,8 @@ export default function InvestorsList() {
         investor.name,
         investor.email,
         investor.phone,
+        investor.creator?.displayName ?? '',
+        investor.creator?.roleLabel ?? '',
         investor.investment_amount,
         investor.expected_maturity_amount,
         investor.investment_type,
@@ -244,6 +250,7 @@ export default function InvestorsList() {
               <tr className="border-b border-border bg-secondary/30">
                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Investor</th>
                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Reference</th>
+                {isExecutiveViewer && <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Created By</th>}
                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Amount</th>
                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Currency</th>
                 <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Category</th>
@@ -268,6 +275,12 @@ export default function InvestorsList() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-muted-foreground">#{investor.reference_number}</td>
+                    {isExecutiveViewer && (
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-medium">{investor.creator?.displayName ?? 'Unknown staff'}</p>
+                        <p className="text-xs text-muted-foreground">{investor.creator?.roleLabel ?? 'Staff'}</p>
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-sm font-medium">{formatInvestorCurrency(Number(investor.investment_amount), investor)}</td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{investor.currency_code ?? 'NGN'}</td>
                     <td className="px-4 py-3">
@@ -307,7 +320,7 @@ export default function InvestorsList() {
               })}
               {investors.length === 0 && (
                 <tr>
-                  <td colSpan={canDeleteInvestors ? 11 : 10} className="text-center text-muted-foreground py-12 text-sm">
+                  <td colSpan={emptyStateColSpan} className="text-center text-muted-foreground py-12 text-sm">
                     {totalCount === 0 ? 'No investors yet. Add your first investment to get started.' : 'No investors found matching your criteria.'}
                   </td>
                 </tr>

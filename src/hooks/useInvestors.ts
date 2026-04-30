@@ -9,14 +9,106 @@ type InvestorInsert = Database['public']['Tables']['investors']['Insert'];
 type DashboardPortfolioSummaryRow = Database['public']['Views']['dashboard_portfolio_summary']['Row'];
 type DashboardInvestmentTypeSummaryRow = Database['public']['Views']['dashboard_investment_type_summary']['Row'];
 type MaturityAlertRow = Database['public']['Functions']['get_maturity_alerts']['Returns'][number];
+type ProfileRow = Database['public']['Tables']['profiles']['Row'];
+type UserRoleRow = Database['public']['Tables']['user_roles']['Row'];
 type DashboardScope = 'staff' | 'executive' | 'all';
 type DashboardInvestorRow = Pick<
   InvestorRow,
   'id' | 'name' | 'investment_amount' | 'maturity_date' | 'liquidation_status' | 'investment_type' | 'created_by' | 'currency_code'
 >;
+type CreatorSummary = {
+  id: string;
+  full_name: string | null;
+  role: string | null;
+  roleLabel: string;
+  displayName: string;
+};
+type InvestorWithCreator = InvestorRow & {
+  creator: CreatorSummary | null;
+};
 
 function isExecutiveInvestorRole(role: string | null | undefined) {
   return role === 'admin' || role === 'super_admin';
+}
+
+function formatCreatorRoleLabel(role: string | null | undefined) {
+  switch (role) {
+    case 'investment_manager':
+      return 'Investment Manager';
+    case 'general_manager':
+      return 'General Manager';
+    case 'admin':
+      return 'IT Manager';
+    case 'super_admin':
+      return 'CEO';
+    case 'software_engineer':
+      return 'Software Engineer';
+    case 'staff':
+      return 'Staff';
+    default:
+      return 'Staff';
+  }
+}
+
+async function getCreatorDirectory(userIds: string[]) {
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+
+  if (!uniqueUserIds.length) {
+    return new Map<string, CreatorSummary>();
+  }
+
+  const [profilesResult, rolesResult] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', uniqueUserIds),
+    supabase
+      .from('user_roles')
+      .select('user_id, role')
+      .in('user_id', uniqueUserIds),
+  ]);
+
+  if (profilesResult.error) throw profilesResult.error;
+  if (rolesResult.error) throw rolesResult.error;
+
+  const profileMap = new Map(
+    ((profilesResult.data ?? []) as Pick<ProfileRow, 'id' | 'full_name'>[]).map((profile) => [profile.id, profile]),
+  );
+  const roleMap = new Map(
+    ((rolesResult.data ?? []) as Pick<UserRoleRow, 'user_id' | 'role'>[]).map((roleRow) => [roleRow.user_id, roleRow.role]),
+  );
+
+  return new Map<string, CreatorSummary>(
+    uniqueUserIds.map((userId) => {
+      const fullName = profileMap.get(userId)?.full_name?.trim() || null;
+      const role = roleMap.get(userId) ?? null;
+      const roleLabel = formatCreatorRoleLabel(role);
+
+      return [
+        userId,
+        {
+          id: userId,
+          full_name: fullName,
+          role,
+          roleLabel,
+          displayName: fullName || roleLabel,
+        },
+      ];
+    }),
+  );
+}
+
+async function attachCreatorMetadata(investors: InvestorRow[]) {
+  const creatorDirectory = await getCreatorDirectory(
+    investors
+      .map((investor) => investor.created_by)
+      .filter((createdBy): createdBy is string => Boolean(createdBy)),
+  );
+
+  return investors.map((investor) => ({
+    ...investor,
+    creator: investor.created_by ? creatorDirectory.get(investor.created_by) ?? null : null,
+  })) as InvestorWithCreator[];
 }
 
 const SELECTED_COLUMNS = 'id,name,email,phone,date_of_birth,gender,nin,bvn,address,next_of_kin_name,next_of_kin_phone,next_of_kin_relationship,passport_photo_url,currency_code,nin_verification_status,bvn_verification_status,verification_provider,last_verified_at,occupation,source_of_funds,reference_number,investment_amount,start_date,maturity_date,tenure,percentage,investment_type,expected_maturity_amount,client_account_number,client_bank,brought_by,investment_certificate_url,liquidation_status,investor_category,category_reference_name,category_reference_email,category_notes,created_at,updated_at,created_by';
@@ -88,7 +180,7 @@ async function getVisibleInvestorsForRole(role: string | null | undefined, userI
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    return (data ?? []) as InvestorRow[];
+    return attachCreatorMetadata((data ?? []) as InvestorRow[]);
   }
 
   if (!userId) {
@@ -102,7 +194,7 @@ async function getVisibleInvestorsForRole(role: string | null | undefined, userI
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data ?? []) as InvestorRow[];
+  return (data ?? []).map((investor) => ({ ...investor, creator: null })) as InvestorWithCreator[];
 }
 
 async function getDashboardInvestorRows(scope: DashboardScope, role: string | null | undefined, userId?: string | null) {
