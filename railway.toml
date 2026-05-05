@@ -1,10 +1,7 @@
 [build]
-builder = "NIXPACKS"
+builder = "RAILPACK"
 buildCommand = "cd server && npm install && npm run build"
 
 [deploy]
 startCommand = "cd server && npm run start"
 restartPolicyType = "ON_FAILURE"
-
-[variables]
-NIXPACKS_NODE_VERSION = "20"
