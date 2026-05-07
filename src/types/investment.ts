@@ -37,8 +37,12 @@ export function calculateMaturityAmount(
   principal: number,
   rate: number,
   tenureMonths: number,
-  _type: InvestmentType
+  type: InvestmentType
 ): number {
+  if (type === 'Upfront') {
+    return principal;
+  }
+
   return principal + calculateTotalReturn(principal, rate, tenureMonths);
 }
 

@@ -74,25 +74,41 @@ type WorkflowInvestor = {
 };
 
 export function useInvestorCertificate(investor?: Pick<WorkflowInvestor, 'name' | 'email'>) {
+  const { role } = useAuth();
+
   return useQuery({
-    queryKey: ['investor-certificate', investor?.email, investor?.name],
-    enabled: !!investor?.email && !!investor?.name,
+    queryKey: ['investor-certificate', investor?.email, investor?.name, role],
+    enabled: !!investor?.email && !!investor?.name && !!role,
     queryFn: async () => {
       if (!investor?.email || !investor.name) {
         throw new Error('Investor context is required to load certificate data.');
       }
 
-      const { data, error } = await supabase
-        .from('certificates' as never)
-        .select('*')
-        .eq('investor_email', investor.email.toLowerCase())
-        .eq('investor_name', investor.name)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) {
+        throw new Error('Failed to load session. Please sign in again.');
+      }
 
-      if (error) throw error;
-      return (data ?? null) as unknown as WorkflowCertificate | null;
+      const query = new URLSearchParams({
+        email: investor.email.toLowerCase(),
+        name: investor.name,
+      });
+
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates/by-investor?${query.toString()}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const raw = await response.text();
+      const data = parseJsonSafely(raw);
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? data?.message ?? 'Failed to load certificate data.');
+      }
+
+      return (data ?? null) as WorkflowCertificate | null;
     },
     refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
   });
@@ -184,13 +200,20 @@ export function useManageInvestorCertificate() {
         certificateId: resolvedCertificateId,
       };
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
+      const certificateId = result.certificateId ?? variables.certificateId;
+
       queryClient.invalidateQueries({ queryKey: ['investor-certificate', variables.investor.email, variables.investor.name] });
       queryClient.invalidateQueries({ queryKey: ['certificate-approval-events'] });
       queryClient.invalidateQueries({ queryKey: ['certificate-inbox'] });
       queryClient.invalidateQueries({ queryKey: ['pending-approvals'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-notifications'] });
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
+
+      if (certificateId) {
+        queryClient.invalidateQueries({ queryKey: ['certificate-preview-viewer', certificateId] });
+        queryClient.invalidateQueries({ queryKey: ['certificate-download-viewer', certificateId] });
+      }
     },
   });
 }
@@ -229,39 +252,10 @@ export async function getCertificateSignedDownloadUrl(certificateId: string) {
 }
 
 export async function getCertificatePreviewUrl(certificateId: string) {
-  console.info('[certificates.view] Requesting PDF preview file', { certificateId });
-  const accessToken = await getActiveAccessToken();
-
-  if (!accessToken) {
-    console.error('[certificates.view] No access token available for PDF preview', { certificateId });
-    throw new Error('Failed to load session. Please sign in again.');
-  }
-
-  const response = await fetch(`${CERTIFICATE_API_URL}/certificates/${certificateId}/file`, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    const raw = await response.text();
-    const data = parseJsonSafely(raw);
-    console.error('[certificates.view] PDF preview request failed', {
-      certificateId,
-      status: response.status,
-      data,
-    });
-    throw new Error(data?.error ?? data?.message ?? 'Failed to load certificate preview');
-  }
-
-  const pdfBlob = await response.blob();
-  console.info('[certificates.view] PDF preview blob ready', {
-    certificateId,
-    size: pdfBlob.size,
-    type: pdfBlob.type,
-  });
-  return URL.createObjectURL(pdfBlob);
+  console.info('[certificates.view] Requesting preview URL', { certificateId });
+  const signedUrl = await getCertificateSignedDownloadUrl(certificateId);
+  console.info('[certificates.view] Preview URL ready', { certificateId });
+  return signedUrl;
 }
 
 export async function openCertificatePreviewInNewTab(certificateId: string) {
@@ -282,13 +276,6 @@ export async function openCertificatePreviewInNewTab(certificateId: string) {
     const previewUrl = await getCertificatePreviewUrl(certificateId);
     console.info('[certificates.view] Opening preview URL in new tab', { certificateId });
     newWindow.location.replace(previewUrl);
-
-    const revokePreviewUrl = () => {
-      URL.revokeObjectURL(previewUrl);
-    };
-
-    newWindow.addEventListener('beforeunload', revokePreviewUrl, { once: true });
-    globalThis.setTimeout(revokePreviewUrl, 60_000);
 
     return previewUrl;
   } catch (error) {

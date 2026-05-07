@@ -11,6 +11,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCurrency, formatInvestorCurrency, formatDate, getStatusColor } from '@/lib/format';
@@ -20,6 +21,7 @@ import {
   useDashboardUpcomingMaturitiesByScope,
 } from '@/hooks/useInvestors';
 import { useCertificateInbox, usePendingApprovals } from '@/hooks/useCertificates';
+import { useDashboardNotifications, useMarkDashboardNotificationRead } from '@/hooks/useDashboardNotifications';
 import { useAuth } from '@/contexts/AuthContext';
 import { daysUntilMaturity } from '@/types/investment';
 
@@ -53,6 +55,8 @@ export default function Dashboard({
   const { data: upcomingMaturities = [], isLoading: isUpcomingLoading } = useDashboardUpcomingMaturitiesByScope(5, scope);
   const { data: investmentTypeSummary = [], isLoading: isTypeSummaryLoading } = useDashboardInvestmentTypeSummaryByScope(scope);
   const { data: certificateInbox = [], isLoading: isCertificateInboxLoading } = useCertificateInbox(scope);
+  const { data: dashboardNotifications = [], isLoading: isDashboardNotificationsLoading } = useDashboardNotifications(5);
+  const markDashboardNotificationRead = useMarkDashboardNotificationRead();
   const { data: pendingApprovals = 0 } = usePendingApprovals(scope);
   const isLoading = isSummaryLoading || isUpcomingLoading || isTypeSummaryLoading;
   const foreignCurrencyCodes = portfolioSummary?.foreign_currency_codes ?? [];
@@ -110,6 +114,16 @@ export default function Dashboard({
       return days >= 0 && days <= 5;
     }),
     [upcomingMaturities],
+  );
+
+  const generalManagerCertificateNotifications = useMemo(
+    () =>
+      role === 'general_manager'
+        ? dashboardNotifications.filter(
+            (notification) => notification.user_role === 'general_manager' && !!notification.action_path,
+          )
+        : [],
+    [dashboardNotifications, role],
   );
 
   const investmentTypeMap = useMemo(
@@ -329,6 +343,61 @@ export default function Dashboard({
         </motion.div>
 
         <motion.div variants={item} className="space-y-3 md:space-y-4">
+          {role === 'general_manager' && (
+            <Card className="glass-card">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base md:text-lg font-heading">Certificate Attention Needed</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {isDashboardNotificationsLoading && (
+                  <p className="text-sm text-muted-foreground">Loading certificate alerts...</p>
+                )}
+                {!isDashboardNotificationsLoading && generalManagerCertificateNotifications.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No certificate alerts need your attention right now.
+                  </p>
+                )}
+                {generalManagerCertificateNotifications.map((notification) => (
+                  <div
+                    key={notification.id}
+                    className="rounded-lg border border-amber-200 bg-amber-50 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-amber-950">{notification.title}</p>
+                        <p className="text-xs text-amber-900 mt-1">{notification.detail}</p>
+                        <p className="text-[11px] text-amber-800 mt-2">{formatDate(notification.created_at)}</p>
+                      </div>
+                      {notification.is_read ? (
+                        <Badge variant="outline">Viewed</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-amber-100 text-amber-950">
+                          New
+                        </Badge>
+                      )}
+                    </div>
+                    {notification.action_path && (
+                      <div className="mt-3">
+                        <Button asChild size="sm">
+                          <Link
+                            to={notification.action_path}
+                            onClick={() => {
+                              if (!notification.is_read) {
+                                markDashboardNotificationRead.mutate(notification.id);
+                              }
+                            }}
+                          >
+                            Open Investor Details
+                          </Link>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
           <Card className="glass-card">
             <CardHeader className="pb-3">
               <CardTitle className="text-base md:text-lg font-heading">Alerts</CardTitle>

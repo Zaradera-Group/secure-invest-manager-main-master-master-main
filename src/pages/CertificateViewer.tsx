@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, Loader2 } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
@@ -39,14 +38,6 @@ export default function CertificateViewer() {
       return getCertificateSignedDownloadUrl(id);
     },
   });
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
-    };
-  }, [previewUrl]);
 
   return (
     <div className="space-y-6">

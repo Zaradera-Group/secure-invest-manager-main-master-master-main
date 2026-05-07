@@ -32,14 +32,14 @@ BEGIN
         ELSE NULL
       END AS next_payment_date,
       CASE
-        WHEN i.investment_type = 'Monthly' THEN ROUND((i.investment_amount / 12.0)::numeric, 2)
-        WHEN i.investment_type = 'Quarterly' THEN ROUND((i.investment_amount / 4.0)::numeric, 2)
-        ELSE i.investment_amount
+        WHEN i.investment_type = 'Monthly' THEN ROUND((i.investment_amount * (i.percentage / 100.0))::numeric, 2)
+        WHEN i.investment_type = 'Quarterly' THEN ROUND((i.investment_amount * (i.percentage / 100.0) * 3)::numeric, 2)
+        WHEN i.investment_type = 'At Maturity' THEN ROUND((i.investment_amount * (i.percentage / 100.0) * i.tenure)::numeric, 2)
+        ELSE NULL
       END AS payment_amount,
       CASE
         WHEN i.investment_type = 'Monthly' THEN 'Monthly Payment Due'
         WHEN i.investment_type = 'Quarterly' THEN 'Quarterly Payment Due'
-        WHEN i.investment_type = 'Upfront' THEN 'Upfront Payment Confirmation'
         WHEN i.investment_type = 'At Maturity' THEN 'Maturity Payment Due'
         ELSE 'Payment Reminder'
       END AS reminder_type
@@ -58,8 +58,6 @@ BEGIN
         (i.investment_type = 'Quarterly' AND
           (i.start_date + (((GREATEST(0, ((CURRENT_DATE - i.start_date) / 90)) + 1) * 90) * INTERVAL '1 day'))::date
             BETWEEN CURRENT_DATE AND CURRENT_DATE + 7)
-        OR
-        (i.investment_type = 'Upfront' AND CURRENT_DATE = i.start_date + 7)
         OR
         (i.investment_type = 'At Maturity' AND i.maturity_date = CURRENT_DATE + 30)
       )

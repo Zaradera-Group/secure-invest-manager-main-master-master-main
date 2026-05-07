@@ -95,7 +95,37 @@ const stageConfig: Record<
 };
 
 export class CertificatesService {
+  async getLatestCertificateForInvestor(
+    actor: AuthenticatedUser,
+    investorEmail: string,
+    investorName: string,
+  ) {
+    const { data, error } = await adminSupabase
+      .from("certificates")
+      .select("*")
+      .eq("investor_email", investorEmail.trim().toLowerCase())
+      .eq("investor_name", investorName)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<CertificateRecord>();
+
+    if (error) {
+      throw new Error(`Failed to load certificate: ${error.message}`);
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    await this.assertCertificateAccess(data, actor);
+    return data;
+  }
+
   async createCertificate(actor: AuthenticatedUser, payload: unknown) {
+    if (actor.role === "general_manager") {
+      throw new Error("General Managers cannot create certificates right now.");
+    }
+
     const input = createCertificateSchema.parse(payload);
     const calculatedInterestPayment = calculateInterestPayment(
       input.amount,
@@ -114,8 +144,6 @@ export class CertificatesService {
         ? "approved"
         : actor.role === "super_admin"
           ? "pending_ceo"
-          : actor.role === "general_manager"
-            ? "pending_general_manager"
           : "pending_manager";
 
     const { data, error } = await adminSupabase
@@ -148,7 +176,7 @@ export class CertificatesService {
       investorReferenceNumber: input.investorReferenceNumber ?? null,
     });
 
-    if (initialStatus === "pending_manager" || initialStatus === "pending_general_manager" || initialStatus === "pending_ceo") {
+    if (initialStatus === "pending_manager" || initialStatus === "pending_ceo") {
       await this.notifyStageUsers(initialStatus, refreshedCertificate);
     }
 
@@ -627,6 +655,7 @@ export class CertificatesService {
   ) {
     const signatories = await this.getSignatoryNames();
     const investorSnapshot = await this.getInvestorSnapshot(certificate, investorContext);
+    const creatorRole = await this.getRoleForUser(certificate.created_by);
     const pdfBytes = await generateCertificatePdf(
       {
         ...certificate,
@@ -642,6 +671,9 @@ export class CertificatesService {
         investor_reference_number: investorSnapshot.referenceNumber,
       },
       signatories,
+      {
+        creatorRole,
+      },
     );
     const certificateUrl = await uploadCertificatePdf(certificate.id, pdfBytes);
 
@@ -858,14 +890,32 @@ export class CertificatesService {
 
   private async assertCertificateAccess(certificate: CertificateRecord, actor: AuthenticatedUser) {
     switch (actor.role) {
-      case "super_admin":
       case "admin":
-      case "general_manager":
-      case "investment_manager":
+      case "super_admin":
         return;
+      case "general_manager":
+        if (
+          certificate.status === "pending_general_manager"
+          || certificate.general_manager_reviewed_by === actor.id
+          || certificate.created_by === actor.id
+        ) {
+          return;
+        }
+        break;
+      case "investment_manager":
+        if (
+          certificate.status === "pending_manager"
+          || certificate.created_by === actor.id
+          || certificate.manager_reviewed_by === actor.id
+        ) {
+          return;
+        }
+        break;
       default:
-        throw new Error("Forbidden for current role");
+        break;
     }
+
+    throw new Error("Forbidden for current role");
   }
 
   private async updateCertificate(

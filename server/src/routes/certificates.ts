@@ -4,6 +4,7 @@ import {
   createCertificate,
   getCertificateFile,
   getCertificateDownloadUrl,
+  getLatestCertificateByInvestor,
   generalManagerApprove,
   managerApprove,
   sendCertificate,
@@ -14,7 +15,8 @@ export const certificatesRouter = Router();
 
 certificatesRouter.use(requireAuth);
 
-certificatesRouter.post("/create", requireRole("investment_manager", "general_manager", "super_admin", "admin"), createCertificate);
+certificatesRouter.get("/by-investor", requireRole("investment_manager", "general_manager", "super_admin", "admin"), getLatestCertificateByInvestor);
+certificatesRouter.post("/create", requireRole("investment_manager", "super_admin", "admin"), createCertificate);
 certificatesRouter.post("/:id/manager-approve", requireRole("investment_manager", "admin"), managerApprove);
 certificatesRouter.get("/:id/file", requireRole("investment_manager", "general_manager", "super_admin", "admin"), getCertificateFile);
 certificatesRouter.get("/:id/download", requireRole("investment_manager", "general_manager", "super_admin", "admin"), getCertificateDownloadUrl);

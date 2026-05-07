@@ -49,6 +49,28 @@ export const createCertificate = async (request: Request, response: Response) =>
   }
 };
 
+export const getLatestCertificateByInvestor = async (request: Request, response: Response) => {
+  try {
+    const investorEmail = typeof request.query.email === "string" ? request.query.email : "";
+    const investorName = typeof request.query.name === "string" ? request.query.name : "";
+
+    if (!investorEmail || !investorName) {
+      response.status(400).json({ message: "Investor email and name are required" });
+      return;
+    }
+
+    const certificate = await service.getLatestCertificateForInvestor(
+      request.authUser!,
+      investorEmail,
+      investorName,
+    );
+
+    response.json(certificate);
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
 export const managerApprove = async (request: Request, response: Response) => {
   try {
     const certificate = await service.managerApprove(

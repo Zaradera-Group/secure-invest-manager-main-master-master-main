@@ -4,14 +4,23 @@ import { fileURLToPath } from "node:url";
 import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib";
 import { adminSupabase } from "./supabase.js";
 import { env } from "../config/env.js";
-import type { CertificateRecord, CertificateSignatoryNames } from "../types/certificates.js";
+import type { AppRole, CertificateRecord, CertificateSignatoryNames } from "../types/certificates.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const serverRootDir = path.resolve(currentDir, "..", "..");
 const certificateBackgroundPath = path.resolve(serverRootDir, "..", "public", "assets", "image_2.png");
+const certificateSealPath = path.resolve(serverRootDir, "..", "public", "assets", "zaradera-seal.png");
 const loadCertificateBackground = async (): Promise<Uint8Array | null> => {
   try {
     return await readFile(certificateBackgroundPath);
+  } catch {
+    return null;
+  }
+};
+
+const loadCertificateSeal = async (): Promise<Uint8Array | null> => {
+  try {
+    return await readFile(certificateSealPath);
   } catch {
     return null;
   }
@@ -40,6 +49,34 @@ const drawSignature = async (
     page.drawImage(image, { x, y, width, height });
   } catch {
     // Leave the signature area empty if the stored value cannot be decoded.
+  }
+};
+
+const drawSeal = async (
+  pdfDoc: PDFDocument,
+  page: ReturnType<PDFDocument["addPage"]>,
+  sealBytes: Uint8Array | null,
+  options: {
+    centerX: number;
+    centerY: number;
+    width: number;
+    height: number;
+  },
+) => {
+  if (!sealBytes) {
+    return;
+  }
+
+  try {
+    const image = await pdfDoc.embedPng(sealBytes);
+    page.drawImage(image, {
+      x: options.centerX - options.width / 2,
+      y: options.centerY - options.height / 2,
+      width: options.width,
+      height: options.height,
+    });
+  } catch {
+    // Leave the seal area empty if the image cannot be decoded.
   }
 };
 
@@ -333,8 +370,12 @@ const parseTenureMonths = (investmentTenure?: string | null) => {
 export const generateCertificatePdf = async (
   certificate: CertificateRecord,
   signatories: CertificateSignatoryNames,
+  options?: {
+    creatorRole?: AppRole | null;
+  },
 ): Promise<Uint8Array> => {
   const backgroundBytes = await loadCertificateBackground();
+  const sealBytes = await loadCertificateSeal();
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595, 842]);
 
@@ -365,10 +406,17 @@ export const generateCertificatePdf = async (
     || `Interest for the tenor of ${tenureLabel} is structured as ${calculatedInterest.toFixed(2)} at the rate of ${interestRatePerMonth}% per month, with a monthly return of ${formatCurrency(monthlyReturnAmount, currencyCode)} and a total return of ${formatCurrency(calculatedInterest, currencyCode)} (${formatCurrencyWords(calculatedInterest, currencyCode)}).`;
   const certificateTitleY = pageHeight - 114;
   const certificateDetailsStartY = pageHeight - 152;
-  const signatureY = 116;
-  const signatureHeight = 34;
-  const signatoryNameY = 94;
-  const signatoryTitleY = 78;
+  const signatureY = 88;
+  const signatureWidth = 112;
+  const signatureHeight = 28;
+  const signatoryNameY = 84;
+  const signatoryTitleY = 70;
+  const isInvestmentManagerCreatedCertificate = options?.creatorRole === "investment_manager";
+  const shouldShowCeoSeal = isInvestmentManagerCreatedCertificate && (
+    certificate.status === "approved"
+    || certificate.status === "sent"
+    || Boolean(certificate.ceo_approved_by || certificate.sent_by)
+  );
 
   page.drawText("Certificate of Investment", {
     x: 170,
@@ -475,22 +523,35 @@ export const generateCertificatePdf = async (
       title: "Investment Manager",
       centerX: 110,
       signature: certificate.manager_signature,
+      showIdentity: true,
+      showSignature: true,
+      showSeal: false,
     },
     {
       name: signatories.generalManager,
       title: "General Manager",
       centerX: 297.5,
       signature: certificate.general_manager_signature,
+      showIdentity: true,
+      showSignature: true,
+      showSeal: false,
     },
     {
       name: signatories.ceo,
       title: "CEO",
       centerX: 485,
       signature: certificate.ceo_signature,
+      showIdentity: !isInvestmentManagerCreatedCertificate,
+      showSignature: !isInvestmentManagerCreatedCertificate,
+      showSeal: shouldShowCeoSeal,
     },
   ] as const;
 
   signatoryColumns.forEach((column) => {
+    if (!column.showIdentity) {
+      return;
+    }
+
     const nameSize = fitTextToWidth(column.name, boldFont, 10, 140);
     const titleSize = fitTextToWidth(column.title, font, 9, 140);
 
@@ -511,9 +572,21 @@ export const generateCertificatePdf = async (
     });
   });
 
-  await drawSignature(pdfDoc, page, certificate.manager_signature, 48, signatureY, 124, signatureHeight);
-  await drawSignature(pdfDoc, page, certificate.general_manager_signature, 235.5, signatureY, 124, signatureHeight);
-  await drawSignature(pdfDoc, page, certificate.ceo_signature, 423, signatureY, 124, signatureHeight);
+  await drawSignature(pdfDoc, page, certificate.manager_signature, 54, signatureY, signatureWidth, signatureHeight);
+  await drawSignature(pdfDoc, page, certificate.general_manager_signature, 241.5, signatureY, signatureWidth, signatureHeight);
+
+  if (!isInvestmentManagerCreatedCertificate) {
+    await drawSignature(pdfDoc, page, certificate.ceo_signature, 429, signatureY, signatureWidth, signatureHeight);
+  }
+
+  if (shouldShowCeoSeal) {
+    await drawSeal(pdfDoc, page, sealBytes, {
+      centerX: 485,
+      centerY: 116,
+      width: 92,
+      height: 92,
+    });
+  }
 
   return pdfDoc.save();
 };

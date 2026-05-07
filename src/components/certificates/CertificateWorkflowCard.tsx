@@ -65,7 +65,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
 
     const actions: Array<{ action: CertificateAction; label: string; icon: typeof FileCheck2; requiresSignature?: boolean }> = [];
 
-    if (!certificate && (role === 'investment_manager' || role === 'general_manager' || isExecutiveRole(role))) {
+    if (!certificate && (role === 'investment_manager' || isExecutiveRole(role))) {
       actions.push({ action: 'generate', label: 'Create Certificate', icon: FileCheck2 });
     }
 

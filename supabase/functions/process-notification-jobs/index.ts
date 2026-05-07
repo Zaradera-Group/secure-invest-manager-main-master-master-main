@@ -11,6 +11,12 @@ type NotificationJob = {
   payload: Record<string, unknown>
 }
 
+type ReminderRecipient = {
+  userId: string
+  email: string
+  role: 'investment_manager' | 'super_admin'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -170,21 +176,30 @@ async function processJob(
     const payload = job.payload ?? {}
     let recipientEmail = readString(payload.email)
 
-    if (!job.user_id || !job.investor_id || !recipientEmail) {
-      if (job.notification_type !== 'monthly_report') {
-        throw new Error('Notification job payload is missing required fields')
-      }
-    }
-
     let subject = ''
     let html = ''
     let metadata: Record<string, unknown> = {}
+    let recipients: ReminderRecipient[] = []
 
     if (job.notification_type === 'payment_reminder') {
+      const investmentType = readString(payload.investmentType)
+      if (!['Monthly', 'Quarterly', 'At Maturity'].includes(investmentType)) {
+        throw new Error(`Unsupported investment type for payment reminder: ${investmentType || 'unknown'}`)
+      }
+
+      if (!job.investor_id) {
+        throw new Error('Payment reminder job is missing investor id')
+      }
+
+      recipients = await resolveReminderRecipients(supabaseClient, job.investor_id, 'payment_reminders')
+      if (recipients.length === 0) {
+        throw new Error('No Investment Manager or CEO email recipients are configured for payment reminders')
+      }
+
       subject = `Payment Reminder: ${readString(payload.investorName)} - ${readString(payload.reminderType)}`
       html = generatePaymentReminderEmail({
         investorName: readString(payload.investorName),
-        investmentType: readString(payload.investmentType),
+        investmentType,
         paymentAmount: readNumber(payload.paymentAmount),
         reminderType: readString(payload.reminderType),
         nextPaymentDate: readString(payload.nextPaymentDate),
@@ -194,6 +209,15 @@ async function processJob(
         investmentAmount: readNumber(payload.paymentAmount),
       }
     } else if (job.notification_type === 'maturity_reminder') {
+      if (!job.investor_id) {
+        throw new Error('Maturity reminder job is missing investor id')
+      }
+
+      recipients = await resolveReminderRecipients(supabaseClient, job.investor_id, 'maturity_reminders')
+      if (recipients.length === 0) {
+        throw new Error('No Investment Manager or CEO email recipients are configured for maturity reminders')
+      }
+
       const daysUntilMaturity = readNumber(payload.daysUntilMaturity)
       subject = `Investment Maturity Reminder: ${readString(payload.investorName)} - ${daysUntilMaturity} days remaining`
       html = generateMaturityReminderEmail({
@@ -209,6 +233,10 @@ async function processJob(
         maturityDate: readString(payload.maturityDate),
       }
     } else if (job.notification_type === 'birthday_greeting') {
+      if (!job.user_id || !recipientEmail) {
+        throw new Error('Birthday greeting job payload is missing required fields')
+      }
+
       subject = `Happy Birthday ${readString(payload.investorName)}!`
       html = generateBirthdayEmail(
         readString(payload.investorName),
@@ -228,13 +256,30 @@ async function processJob(
       throw new Error(`Unsupported notification job type: ${job.notification_type}`)
     }
 
-    const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${serviceRoleKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    if (recipients.length > 0) {
+      for (const recipient of recipients) {
+        await sendEmailNotification({
+          supabaseUrl,
+          serviceRoleKey,
+          to: recipient.email,
+          subject,
+          html,
+          userId: recipient.userId,
+          investorId: job.investor_id,
+          notificationType: job.notification_type,
+          recipient: recipient.email,
+          metadata,
+        })
+      }
+      recipientEmail = recipients.map((recipient) => recipient.email).join(', ')
+    } else {
+      if (!job.user_id || !recipientEmail) {
+        throw new Error('Notification job payload is missing required fields')
+      }
+
+      await sendEmailNotification({
+        supabaseUrl,
+        serviceRoleKey,
         to: recipientEmail,
         subject,
         html,
@@ -242,13 +287,8 @@ async function processJob(
         investorId: job.investor_id,
         notificationType: job.notification_type,
         recipient: recipientEmail,
-        deliveryChannel: 'email',
-        ...metadata,
-      }),
-    })
-
-    if (!emailResponse.ok) {
-      throw new Error(await emailResponse.text())
+        metadata,
+      })
     }
 
     const { error: completeError } = await supabaseClient
@@ -301,6 +341,120 @@ async function processJob(
       error: errorMessage,
     }
   }
+}
+
+async function sendEmailNotification(args: {
+  supabaseUrl: string
+  serviceRoleKey: string
+  to: string
+  subject: string
+  html: string
+  userId: string
+  investorId: string | null
+  notificationType: string
+  recipient: string
+  metadata: Record<string, unknown>
+}) {
+  const emailResponse = await fetch(`${args.supabaseUrl}/functions/v1/send-email`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${args.serviceRoleKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      to: args.to,
+      subject: args.subject,
+      html: args.html,
+      userId: args.userId,
+      investorId: args.investorId,
+      notificationType: args.notificationType,
+      recipient: args.recipient,
+      deliveryChannel: 'email',
+      ...args.metadata,
+    }),
+  })
+
+  if (!emailResponse.ok) {
+    throw new Error(await emailResponse.text())
+  }
+}
+
+async function resolveReminderRecipients(
+  supabaseClient: ReturnType<typeof createClient>,
+  investorId: string,
+  preferenceColumn: 'payment_reminders' | 'maturity_reminders'
+): Promise<ReminderRecipient[]> {
+  const { data: roleRows, error: roleError } = await supabaseClient
+    .from('user_roles')
+    .select('user_id, role')
+    .in('role', ['investment_manager', 'super_admin'])
+
+  if (roleError) throw roleError
+
+  const typedRoleRows = (roleRows ?? []) as Array<{
+    user_id: string
+    role: 'investment_manager' | 'super_admin'
+  }>
+
+  if (typedRoleRows.length === 0) {
+    return []
+  }
+
+  const { data: preferences, error: preferencesError } = await supabaseClient
+    .from('notification_preferences')
+    .select(`user_id, email_enabled, ${preferenceColumn}`)
+    .in('user_id', typedRoleRows.map((row) => row.user_id))
+
+  if (preferencesError) throw preferencesError
+
+  const enabledPreferenceUserIds = new Set(
+    (preferences ?? [])
+      .filter((row) => row.email_enabled === true && row[preferenceColumn] === true)
+      .map((row) => row.user_id as string)
+  )
+
+  const eligibleRoleRows = typedRoleRows.filter((row) => enabledPreferenceUserIds.has(row.user_id))
+
+  if (eligibleRoleRows.length === 0) {
+    return []
+  }
+
+  const { data: investor, error: investorError } = await supabaseClient
+    .from('investors')
+    .select('created_by')
+    .eq('id', investorId)
+    .maybeSingle()
+
+  if (investorError) throw investorError
+
+  const preferredInvestmentManagerId = investor?.created_by ?? null
+  const filteredRoleRows = eligibleRoleRows.filter((row) => {
+    if (row.role === 'super_admin') {
+      return true
+    }
+
+    return preferredInvestmentManagerId ? row.user_id === preferredInvestmentManagerId : true
+  })
+
+  const { data: authUsers, error: usersError } = await supabaseClient.auth.admin.listUsers()
+  if (usersError) throw usersError
+
+  return filteredRoleRows
+    .map((row) => {
+      const user = authUsers.users.find((authUser) => authUser.id === row.user_id)
+      const email = user?.email?.trim()
+
+      if (!email) {
+        return null
+      }
+
+      return {
+        userId: row.user_id,
+        email,
+        role: row.role,
+      } satisfies ReminderRecipient
+    })
+    .filter((recipient): recipient is ReminderRecipient => recipient !== null)
 }
 
 function buildRunSummary(
@@ -392,17 +546,17 @@ function generatePaymentReminderEmail(data: {
           `}
 
           <div class="payment-details">
-            <h3>Payment Details</h3>
+            <h3>ROI Payment Details</h3>
             <p><strong>Investor:</strong> ${investorName}</p>
             <p><strong>Investment Type:</strong> ${investmentType}</p>
-            <p><strong>Payment Amount:</strong></p>
+            <p><strong>Return Due:</strong></p>
             <div class="amount">N${paymentAmount.toLocaleString()}</div>
             <p><strong>Payment Due Date:</strong> ${new Date(nextPaymentDate).toLocaleDateString()}</p>
             <p><strong>Final Maturity Date:</strong> ${new Date(maturityDate).toLocaleDateString()}</p>
           </div>
 
-          <p>This is a reminder that your ${investmentType.toLowerCase()} investment payment is due soon.</p>
-          <p>Thank you for your continued partnership with Zaradera Credit Limited.</p>
+          <p>This is an internal reminder that the return on investment for this ${investmentType.toLowerCase()} placement is due soon.</p>
+          <p>Please review the investor record and prepare the necessary payout follow-up.</p>
         </div>
 
         <div class="footer">
@@ -456,8 +610,8 @@ function generateMaturityReminderEmail(data: {
             <strong>Investment Type:</strong> ${investmentType}
           </div>
 
-          <p>This is an automated reminder that an investment in your portfolio is approaching maturity.</p>
-          <p>Please contact our office to discuss liquidation options and next steps for your matured investment.</p>
+          <p>This is an internal reminder that an investment is approaching maturity.</p>
+          <p>Please review the upcoming payout and liquidation steps for this investor.</p>
         </div>
 
         <div class="footer">
