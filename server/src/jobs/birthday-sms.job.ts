@@ -2,10 +2,12 @@ import cron from "node-cron";
 import { env } from "../config/env.js";
 import { adminSupabase } from "../lib/supabase.js";
 import { sendBirthdaySmsBatch } from "../lib/sms.js";
+import { sendBirthdayEmail } from "../lib/email.js";
 
 type BirthdayInvestor = {
   id: string;
   name: string;
+  email: string;
   phone: string;
   date_of_birth: string | null;
 };
@@ -16,7 +18,7 @@ let birthdayJobRunning = false;
 async function getTodaysBirthdayInvestors(now = new Date()) {
   const { data, error } = await adminSupabase
     .from("investors")
-    .select("id, name, phone, date_of_birth")
+    .select("id, name, email, phone, date_of_birth")
     .not("date_of_birth", "is", null)
     .not("phone", "is", null);
 
@@ -53,15 +55,36 @@ export async function runBirthdaySmsJob(now = new Date()) {
       return;
     }
 
-    const result = await sendBirthdaySmsBatch(
+    const smsResult = await sendBirthdaySmsBatch(
       investors.map((investor) => ({
         name: investor.name,
         phone: investor.phone,
       })),
     );
 
+    // Send email fallback for failed SMS
+    const failedRecipients = smsResult.results
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.status === "rejected")
+      .map(({ index }) => investors[index]);
+
+    let emailFallbackCount = 0;
+    for (const investor of failedRecipients) {
+      if (investor.email) {
+        try {
+          const age = investor.date_of_birth
+            ? new Date().getFullYear() - new Date(investor.date_of_birth).getFullYear()
+            : null;
+          await sendBirthdayEmail(investor.email, investor.name, age);
+          emailFallbackCount++;
+        } catch (emailError) {
+          console.error(`[birthday-sms-job] failed to send email fallback to ${investor.email}:`, emailError);
+        }
+      }
+    }
+
     console.log(
-      `[birthday-sms-job] completed: total=${result.total} sent=${result.sent} failed=${result.failed}`,
+      `[birthday-sms-job] completed: total=${smsResult.total} sms_sent=${smsResult.sent} sms_failed=${smsResult.failed} email_fallback=${emailFallbackCount}`,
     );
   } catch (error) {
     console.error("[birthday-sms-job] failed:", error);
