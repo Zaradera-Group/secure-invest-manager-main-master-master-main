@@ -52,6 +52,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
   const manageCertificate = useManageInvestorCertificate();
   const [dialogAction, setDialogAction] = useState<CertificateAction | null>(null);
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+  const [isSignatureValid, setIsSignatureValid] = useState(false);
   const [notes, setNotes] = useState('');
   const [issueDate, setIssueDate] = useState(new Date().toISOString().split('T')[0]);
   const [latestCertificateUrl, setLatestCertificateUrl] = useState<string | null>(null);
@@ -216,6 +217,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
 
       setDialogAction(null);
       setSignatureDataUrl(null);
+      setIsSignatureValid(false);
       setNotes('');
     } catch (error) {
       toast({
@@ -225,6 +227,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
       });
     } finally {
       setSignatureDataUrl(null);
+      setIsSignatureValid(false);
       setNotes('');
     }
   };
@@ -233,6 +236,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
     setJustSigned(false);
     setDialogAction(action);
     setSignatureDataUrl(null);
+    setIsSignatureValid(false);
     setNotes('');
     setIssueDate(new Date().toISOString().split('T')[0]);
   };
@@ -449,7 +453,16 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
         </CardContent>
       </Card>
 
-      <Dialog open={!!dialogAction} onOpenChange={(open) => !open && setDialogAction(null)}>
+      <Dialog
+        open={!!dialogAction}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDialogAction(null);
+            setSignatureDataUrl(null);
+            setIsSignatureValid(false);
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Complete Certificate Step</DialogTitle>
@@ -481,7 +494,10 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
             {requiresSignature && (
               <div className="space-y-2">
                 <Label>Digital Signature</Label>
-                <SignaturePad onChange={setSignatureDataUrl} />
+                <SignaturePad
+                  onChange={setSignatureDataUrl}
+                  onValidityChange={setIsSignatureValid}
+                />
               </div>
             )}
 
@@ -503,7 +519,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
               <Button
                 type="button"
                 onClick={() => dialogAction && runAction(dialogAction, signatureDataUrl)}
-                disabled={manageCertificate.isPending || (requiresSignature && !signatureDataUrl)}
+                disabled={manageCertificate.isPending || (requiresSignature && (!signatureDataUrl || !isSignatureValid))}
               >
                 {manageCertificate.isPending ? 'Processing...' : 'Confirm'}
               </Button>

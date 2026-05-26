@@ -39,12 +39,32 @@ const createCertificateSchema = z.object({
   interestPayment: z.string().optional(),
 });
 
+const MIN_SIGNATURE_DATA_URL_LENGTH = 1500;
+
+const isMeaningfulSignature = (value: string) => {
+  const normalized = value.trim();
+
+  if (!normalized.startsWith("data:image/")) {
+    return false;
+  }
+
+  return normalized.length >= MIN_SIGNATURE_DATA_URL_LENGTH;
+};
+
 const signatureSchema = z.object({
-  signature: z.string().min(1),
+  signature: z
+    .string()
+    .min(1)
+    .refine((value) => isMeaningfulSignature(value), "A full signature is required before submitting."),
 });
 
 const optionalSignatureSchema = z.object({
-  signature: z.string().min(1).nullable().optional(),
+  signature: z
+    .string()
+    .min(1)
+    .refine((value) => isMeaningfulSignature(value), "A full signature is required before submitting.")
+    .nullable()
+    .optional(),
 });
 
 const parseTenureMonths = (investmentTenure?: string) => {

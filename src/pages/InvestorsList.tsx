@@ -21,6 +21,7 @@ import { getDefaultDashboardPath } from '@/lib/authRoutes';
 export default function InvestorsList() {
   const [page, setPage] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [searchInput, setSearchInput] = useState(searchParams.get('search') || '');
   const [search, setSearch] = useState(searchParams.get('search') || '');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -45,19 +46,34 @@ export default function InvestorsList() {
   const isExecutiveViewer = role === 'admin' || role === 'super_admin';
   const emptyStateColSpan = (isExecutiveViewer ? 12 : 11) + (canDeleteInvestors ? 1 : 0);
 
-  // Update URL when search changes
   useEffect(() => {
-    if (search) {
-      setSearchParams({ search });
-    } else {
-      setSearchParams({});
-    }
+    const urlSearch = searchParams.get('search') || '';
+    setSearch(urlSearch);
+    setSearchInput(urlSearch);
     setPage(0);
-  }, [search, setSearchParams]);
+  }, [searchParams]);
 
   useEffect(() => {
     setPage(0);
   }, [statusFilter, typeFilter, categoryFilter]);
+
+  const applySearch = () => {
+    const normalizedSearch = searchInput.trim();
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (normalizedSearch) {
+      nextParams.set('search', normalizedSearch);
+    } else {
+      nextParams.delete('search');
+    }
+
+    setSearchParams(nextParams);
+  };
+
+  const handleSearchSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    applySearch();
+  };
 
   const handleExport = async () => {
     try {
@@ -204,10 +220,20 @@ export default function InvestorsList() {
       <Card className="glass-card">
         <CardContent className="p-4">
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search by name, email, bank, referrer..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
+            <form onSubmit={handleSearchSubmit} className="flex items-center gap-3 flex-1 flex-wrap">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name, email, bank, referrer..."
+                  className="pl-9"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                />
+              </div>
+              <Button type="submit" variant="outline" size="sm">
+                Search
+              </Button>
+            </form>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-[150px]"><Filter className="w-4 h-4 mr-2" /><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>

@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js'
 import { corsHeaders } from '../_shared/cors.ts'
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
+const TWILIO_API_BASE_URL = 'https://api.twilio.com/2010-04-01'
 
 type NotificationJob = {
   id: string
@@ -13,7 +14,8 @@ type NotificationJob = {
 
 type ReminderRecipient = {
   userId: string
-  email: string
+  email: string | null
+  phone: string | null
   role: 'investment_manager' | 'super_admin'
 }
 
@@ -213,13 +215,13 @@ async function processJob(
         throw new Error('Maturity reminder job is missing investor id')
       }
 
-      recipients = await resolveReminderRecipients(supabaseClient, job.investor_id, 'maturity_reminders')
+      recipients = await resolveMaturityReminderRecipients(supabaseClient, job.investor_id)
       if (recipients.length === 0) {
-        throw new Error('No Investment Manager or CEO email recipients are configured for maturity reminders')
+        throw new Error('No Investment Manager recipient is configured for maturity reminders')
       }
 
       const daysUntilMaturity = readNumber(payload.daysUntilMaturity)
-      subject = `Investment Maturity Reminder: ${readString(payload.investorName)} - ${daysUntilMaturity} days remaining`
+      subject = buildMaturityReminderSubject(readString(payload.investorName), daysUntilMaturity)
       html = generateMaturityReminderEmail({
         investorName: readString(payload.investorName),
         daysUntilMaturity,
@@ -257,21 +259,59 @@ async function processJob(
     }
 
     if (recipients.length > 0) {
+      const deliveredRecipients: string[] = []
+
       for (const recipient of recipients) {
-        await sendEmailNotification({
-          supabaseUrl,
-          serviceRoleKey,
-          to: recipient.email,
-          subject,
-          html,
-          userId: recipient.userId,
-          investorId: job.investor_id,
-          notificationType: job.notification_type,
-          recipient: recipient.email,
-          metadata,
-        })
+        if (job.notification_type === 'maturity_reminder' && job.investor_id) {
+          await upsertDashboardNotification(supabaseClient, {
+            userId: recipient.userId,
+            userRole: mapRecipientRoleToNotificationRole(recipient.role),
+            recipientEmail: recipient.email,
+            investorId: job.investor_id,
+            investorName: readString(payload.investorName),
+            maturityDate: readString(payload.maturityDate),
+            daysUntilMaturity: readNumber(payload.daysUntilMaturity),
+          })
+        }
+
+        if (recipient.email) {
+          await sendEmailNotification({
+            supabaseUrl,
+            serviceRoleKey,
+            to: recipient.email,
+            subject,
+            html,
+            userId: recipient.userId,
+            investorId: job.investor_id,
+            notificationType: job.notification_type,
+            recipient: recipient.email,
+            metadata,
+          })
+          deliveredRecipients.push(recipient.email)
+        }
+
+        if (job.notification_type === 'maturity_reminder' && recipient.phone) {
+          const smsMessage = buildMaturityReminderSms({
+            investorName: readString(payload.investorName),
+            daysUntilMaturity: readNumber(payload.daysUntilMaturity),
+            maturityDate: readString(payload.maturityDate),
+            investmentAmount: readNumber(payload.investmentAmount),
+          })
+
+          await sendSmsNotification({
+            supabaseClient,
+            to: recipient.phone,
+            body: smsMessage,
+            userId: recipient.userId,
+            investorId: job.investor_id,
+            notificationType: job.notification_type,
+            recipient: recipient.phone,
+            metadata,
+          })
+          deliveredRecipients.push(recipient.phone)
+        }
       }
-      recipientEmail = recipients.map((recipient) => recipient.email).join(', ')
+      recipientEmail = deliveredRecipients.join(', ')
     } else {
       if (!job.user_id || !recipientEmail) {
         throw new Error('Notification job payload is missing required fields')
@@ -442,7 +482,8 @@ async function resolveReminderRecipients(
   return filteredRoleRows
     .map((row) => {
       const user = authUsers.users.find((authUser) => authUser.id === row.user_id)
-      const email = user?.email?.trim()
+      const email = user?.email?.trim() ?? null
+      const phone = readAuthUserPhone(user)
 
       if (!email) {
         return null
@@ -451,10 +492,308 @@ async function resolveReminderRecipients(
       return {
         userId: row.user_id,
         email,
+        phone,
         role: row.role,
       } satisfies ReminderRecipient
     })
     .filter((recipient): recipient is ReminderRecipient => recipient !== null)
+}
+
+async function resolveMaturityReminderRecipients(
+  supabaseClient: ReturnType<typeof createClient>,
+  investorId: string,
+): Promise<ReminderRecipient[]> {
+  const { data: roleRows, error: roleError } = await supabaseClient
+    .from('user_roles')
+    .select('user_id, role')
+    .eq('role', 'investment_manager')
+
+  if (roleError) throw roleError
+
+  const typedRoleRows = (roleRows ?? []) as Array<{
+    user_id: string
+    role: 'investment_manager'
+  }>
+
+  if (typedRoleRows.length === 0) {
+    return []
+  }
+
+  const { data: preferences, error: preferencesError } = await supabaseClient
+    .from('notification_preferences')
+    .select('user_id, maturity_reminders')
+    .in('user_id', typedRoleRows.map((row) => row.user_id))
+
+  if (preferencesError) throw preferencesError
+
+  const enabledUserIds = new Set(
+    (preferences ?? [])
+      .filter((row) => row.maturity_reminders === true)
+      .map((row) => row.user_id as string)
+  )
+
+  const { data: investor, error: investorError } = await supabaseClient
+    .from('investors')
+    .select('created_by')
+    .eq('id', investorId)
+    .maybeSingle()
+
+  if (investorError) throw investorError
+
+  const preferredInvestmentManagerId = investor?.created_by ?? null
+  const filteredRoleRows = typedRoleRows.filter((row) => {
+    if (!enabledUserIds.has(row.user_id)) {
+      return false
+    }
+
+    return preferredInvestmentManagerId ? row.user_id === preferredInvestmentManagerId : true
+  })
+
+  if (filteredRoleRows.length === 0) {
+    return []
+  }
+
+  const { data: authUsers, error: usersError } = await supabaseClient.auth.admin.listUsers()
+  if (usersError) throw usersError
+
+  return filteredRoleRows
+    .map((row) => {
+      const user = authUsers.users.find((authUser) => authUser.id === row.user_id)
+      const email = user?.email?.trim() ?? null
+      const phone = readAuthUserPhone(user)
+
+      if (!email && !phone) {
+        return null
+      }
+
+      return {
+        userId: row.user_id,
+        email,
+        phone,
+        role: row.role,
+      } satisfies ReminderRecipient
+    })
+    .filter((recipient): recipient is ReminderRecipient => recipient !== null)
+}
+
+function readAuthUserPhone(user: { phone?: string | null; user_metadata?: Record<string, unknown> } | undefined) {
+  const metadataPhone = user?.user_metadata?.phone
+
+  if (typeof user?.phone === 'string' && user.phone.trim()) {
+    return user.phone.trim()
+  }
+
+  if (typeof metadataPhone === 'string' && metadataPhone.trim()) {
+    return metadataPhone.trim()
+  }
+
+  return null
+}
+
+function buildMaturityReminderSubject(investorName: string, daysUntilMaturity: number) {
+  if (daysUntilMaturity <= 0) {
+    return `Investment Maturity Reminder: ${investorName} matures today`
+  }
+
+  return `Investment Maturity Reminder: ${investorName} - ${daysUntilMaturity} days remaining`
+}
+
+function buildMaturityReminderSms(data: {
+  investorName: string
+  daysUntilMaturity: number
+  maturityDate: string
+  investmentAmount: number
+}) {
+  const maturityDateLabel = new Date(data.maturityDate).toLocaleDateString()
+  const timingLabel =
+    data.daysUntilMaturity <= 0
+      ? 'matures today'
+      : `matures in ${data.daysUntilMaturity} day${data.daysUntilMaturity === 1 ? '' : 's'}`
+
+  return `Maturity alert: ${data.investorName} ${timingLabel} on ${maturityDateLabel}. Investment amount: N${data.investmentAmount.toLocaleString()}.`
+}
+
+function mapRecipientRoleToNotificationRole(role: ReminderRecipient['role']) {
+  return role === 'super_admin' ? 'ceo' : 'manager'
+}
+
+async function upsertDashboardNotification(
+  supabaseClient: ReturnType<typeof createClient>,
+  args: {
+    userId: string
+    userRole: 'manager' | 'ceo'
+    recipientEmail: string | null
+    investorId: string
+    investorName: string
+    maturityDate: string
+    daysUntilMaturity: number
+  }
+) {
+  const title =
+    args.daysUntilMaturity <= 0
+      ? 'Investment matured today'
+      : 'Investment maturity reminder'
+  const detail =
+    args.daysUntilMaturity <= 0
+      ? `${args.investorName}'s investment matures today (${new Date(args.maturityDate).toLocaleDateString()}).`
+      : `${args.investorName}'s investment matures in ${args.daysUntilMaturity} day${args.daysUntilMaturity === 1 ? '' : 's'} on ${new Date(args.maturityDate).toLocaleDateString()}.`
+  const actionPath = `/investors/${args.investorId}`
+  const startOfDay = new Date()
+  startOfDay.setHours(0, 0, 0, 0)
+
+  const { data: existing, error: existingError } = await supabaseClient
+    .from('notifications')
+    .select('id')
+    .eq('recipient_user_id', args.userId)
+    .eq('user_role', args.userRole)
+    .eq('title', title)
+    .eq('detail', detail)
+    .eq('action_path', actionPath)
+    .gte('created_at', startOfDay.toISOString())
+    .limit(1)
+    .maybeSingle()
+
+  if (existingError) throw existingError
+  if (existing) return
+
+  const { error } = await supabaseClient
+    .from('notifications')
+    .insert({
+      certificate_id: null,
+      user_role: args.userRole,
+      message: detail,
+      title,
+      detail,
+      recipient_user_id: args.userId,
+      recipient_email: args.recipientEmail,
+      action_path: actionPath,
+      is_read: false,
+    })
+
+  if (error) throw error
+}
+
+async function sendSmsNotification(args: {
+  supabaseClient: ReturnType<typeof createClient>
+  to: string
+  body: string
+  userId: string
+  investorId: string | null
+  notificationType: string
+  recipient: string
+  metadata: Record<string, unknown>
+}) {
+  const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')?.trim()
+  const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')?.trim()
+  const messagingServiceSid = Deno.env.get('TWILIO_MESSAGING_SERVICE_SID')?.trim()
+  const fromNumber = Deno.env.get('TWILIO_FROM_NUMBER')?.trim()
+
+  if (!accountSid || !authToken) {
+    throw new Error('Twilio SMS is not configured: missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN')
+  }
+
+  if (!messagingServiceSid && !fromNumber) {
+    throw new Error('Twilio SMS is not configured: provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER')
+  }
+
+  const requestBody = new URLSearchParams({
+    To: args.to,
+    Body: args.body,
+  })
+
+  if (messagingServiceSid) {
+    requestBody.set('MessagingServiceSid', messagingServiceSid)
+  } else if (fromNumber) {
+    requestBody.set('From', fromNumber)
+  }
+
+  const authHeader = `Basic ${btoa(`${accountSid}:${authToken}`)}`
+  const response = await fetch(`${TWILIO_API_BASE_URL}/Accounts/${accountSid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      Authorization: authHeader,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: requestBody,
+  })
+
+  const rawResponse = await response.text()
+  const payload = parseJsonSafely(rawResponse)
+
+  await logNotificationDelivery(
+    args.supabaseClient,
+    {
+      userId: args.userId,
+      investorId: args.investorId,
+      notificationType: args.notificationType,
+      subject: 'Maturity reminder SMS',
+      body: args.body,
+      recipient: args.recipient,
+      deliveryChannel: 'sms',
+      metadata: args.metadata,
+    },
+    response.ok ? 'sent' : 'failed',
+    {
+      providerName: 'twilio',
+      providerMessageId: typeof payload?.sid === 'string' ? payload.sid : null,
+      providerStatus: typeof payload?.status === 'string' ? payload.status : response.statusText,
+      providerResponse: payload,
+      providerErrorCode: response.ok ? null : `${response.status}`,
+      providerErrorMessage: response.ok ? null : readProviderMessage(payload) ?? rawResponse,
+    }
+  )
+
+  if (!response.ok) {
+    throw new Error(`Twilio SMS error: ${response.status} ${response.statusText}`)
+  }
+}
+
+async function logNotificationDelivery(
+  supabaseClient: ReturnType<typeof createClient>,
+  args: {
+    userId: string
+    investorId: string | null
+    notificationType: string
+    subject: string
+    body: string
+    recipient: string
+    deliveryChannel: 'email' | 'sms'
+    metadata: Record<string, unknown>
+  },
+  deliveryStatus: 'sent' | 'failed',
+  telemetry: {
+    providerName: string
+    providerMessageId?: string | null
+    providerStatus?: string | null
+    providerResponse?: Record<string, unknown> | null
+    providerErrorCode?: string | null
+    providerErrorMessage?: string | null
+  },
+) {
+  const { error } = await supabaseClient
+    .from('email_notifications')
+    .insert({
+      user_id: args.userId,
+      investor_id: args.investorId,
+      notification_type: args.notificationType,
+      email_subject: args.subject,
+      email_body: args.body,
+      delivery_status: deliveryStatus,
+      delivery_channel: args.deliveryChannel,
+      recipient: args.recipient,
+      days_until_maturity: readNullableNumber(args.metadata.daysUntilMaturity),
+      investment_amount: readNullableNumber(args.metadata.investmentAmount),
+      maturity_date: readNullableString(args.metadata.maturityDate),
+      error_message: telemetry.providerErrorMessage ?? null,
+      provider_name: telemetry.providerName,
+      provider_message_id: telemetry.providerMessageId ?? null,
+      provider_status: telemetry.providerStatus ?? null,
+      provider_response: telemetry.providerResponse ?? null,
+      provider_error_code: telemetry.providerErrorCode ?? null,
+      provider_error_message: telemetry.providerErrorMessage ?? null,
+    })
+
+  if (error) throw error
 }
 
 function buildRunSummary(
@@ -483,6 +822,19 @@ function readString(value: unknown): string {
 
 function readNumber(value: unknown): number {
   return typeof value === 'number' ? value : Number(value ?? 0)
+}
+
+function readNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
 }
 
 function nullableNumber(value: unknown): number | null {
@@ -576,6 +928,10 @@ function generateMaturityReminderEmail(data: {
   investmentType: string
 }) {
   const { investorName, daysUntilMaturity, maturityDate, investmentAmount, investmentType } = data
+  const timingText =
+    daysUntilMaturity <= 0
+      ? 'This investment matures today.'
+      : `This investment matures in ${daysUntilMaturity} day${daysUntilMaturity === 1 ? '' : 's'}.`
 
   return `
     <!DOCTYPE html>
@@ -604,7 +960,7 @@ function generateMaturityReminderEmail(data: {
 
           <div class="highlight">
             <strong>Investor:</strong> ${investorName}<br>
-            <strong>Days Until Maturity:</strong> ${daysUntilMaturity}<br>
+            <strong>Status:</strong> ${timingText}<br>
             <strong>Maturity Date:</strong> ${new Date(maturityDate).toLocaleDateString()}<br>
             <strong>Investment Amount:</strong> N${investmentAmount.toLocaleString()}<br>
             <strong>Investment Type:</strong> ${investmentType}
@@ -621,6 +977,24 @@ function generateMaturityReminderEmail(data: {
     </body>
     </html>
   `
+}
+
+function parseJsonSafely(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+function readProviderMessage(payload: Record<string, unknown> | null) {
+  if (!payload) return null
+  if (typeof payload.message === 'string') return payload.message
+  if (typeof payload.error_message === 'string') return payload.error_message
+  return null
 }
 
 function formatOrdinal(value: number): string {

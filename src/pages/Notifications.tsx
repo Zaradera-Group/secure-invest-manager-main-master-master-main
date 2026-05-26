@@ -68,7 +68,7 @@ export default function Notifications() {
     >
       <div>
         <h1 className="text-2xl font-heading font-bold">Notifications</h1>
-        <p className="text-muted-foreground text-sm mt-1">Role-targeted certificate updates and investment maturity alerts.</p>
+        <p className="text-muted-foreground text-sm mt-1">Dashboard alerts for certificate workflow and investment maturity reminders.</p>
       </div>
 
       <Card className="glass-card">
@@ -76,7 +76,7 @@ export default function Notifications() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <CardTitle className="text-base font-heading flex items-center gap-2">
               <Bell className="w-4 h-4 text-accent" />
-              Certificate Workflow Alerts
+              Dashboard Alerts
             </CardTitle>
             <Button
               type="button"
@@ -93,7 +93,7 @@ export default function Notifications() {
         <CardContent className="space-y-3">
           {dashboardNotifications.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-8">
-              No certificate workflow alerts assigned to you right now.
+              No dashboard alerts assigned to you right now.
             </p>
           )}
 
