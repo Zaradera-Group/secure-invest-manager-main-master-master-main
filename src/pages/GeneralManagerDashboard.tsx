@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useCertificateInbox, usePendingApprovals } from '@/hooks/useCertificates';
 import { getInvestorCategoryBadgeClass, getInvestorCategoryShortLabel } from '@/lib/investorCategories';
+import { PublicIntakeLinkCard } from '@/components/public-intake/PublicIntakeLinkCard';
 
 export default function GeneralManagerDashboard() {
   const { data: certificateInbox = [], isLoading } = useCertificateInbox();
@@ -14,6 +15,10 @@ export default function GeneralManagerDashboard() {
         <h1 className="text-2xl font-heading font-bold">General Manager Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">Certificates waiting for General Manager approval.</p>
       </div>
+
+      <PublicIntakeLinkCard
+        description="Share the public intake with investors or partners, then review the submitted request in the intake inbox."
+      />
 
       <Card className="glass-card">
         <CardHeader>

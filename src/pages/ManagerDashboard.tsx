@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useCertificateInbox, usePendingApprovals } from '@/hooks/useCertificates';
 import { getInvestorCategoryBadgeClass, getInvestorCategoryShortLabel } from '@/lib/investorCategories';
+import { PublicIntakeLinkCard } from '@/components/public-intake/PublicIntakeLinkCard';
 
 export default function ManagerDashboard() {
   const { data: certificateInbox = [], isLoading } = useCertificateInbox();
@@ -14,6 +15,10 @@ export default function ManagerDashboard() {
         <h1 className="text-2xl font-heading font-bold">IN Manager Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">Certificates waiting for Investment Manager review.</p>
       </div>
+
+      <PublicIntakeLinkCard
+        description="Use this external intake link when onboarding an investor outside the system, then review the request from the inbox."
+      />
 
       <Card className="glass-card">
         <CardHeader>

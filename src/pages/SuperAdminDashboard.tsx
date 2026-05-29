@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { Database } from '@/integrations/supabase/types';
 import { supabase } from '@/integrations/supabase/client';
+import { PublicIntakeLinkCard } from '@/components/public-intake/PublicIntakeLinkCard';
 
 export default function SuperAdminDashboard() {
   const { data: creatorDirectory = new Map<string, { displayName: string; roleLabel: string }>() } = useQuery({
@@ -112,6 +113,11 @@ export default function SuperAdminDashboard() {
         <h1 className="text-2xl font-heading font-bold">Executive Oversight Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">See every investor, certificate workflow stage, and staff-recorded activity across the full system.</p>
       </div>
+
+      <PublicIntakeLinkCard
+        title="Public Intake Shortcut"
+        description="Copy and share the external intake link from the CEO workspace without exposing the internal investor creation flow."
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {cards.map((card) => (

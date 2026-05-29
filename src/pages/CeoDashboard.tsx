@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useCertificateInbox, usePendingApprovals } from '@/hooks/useCertificates';
 import { getInvestorCategoryBadgeClass, getInvestorCategoryShortLabel } from '@/lib/investorCategories';
+import { PublicIntakeLinkCard } from '@/components/public-intake/PublicIntakeLinkCard';
 
 export default function CeoDashboard() {
   const { data: certificateInbox = [], isLoading } = useCertificateInbox();
@@ -14,6 +15,10 @@ export default function CeoDashboard() {
         <h1 className="text-2xl font-heading font-bold">CEO Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">Final certificate approvals for CEO review.</p>
       </div>
+
+      <PublicIntakeLinkCard
+        description="Keep the public intake link handy for investor referrals. It opens the external form and keeps the internal workflow private."
+      />
 
       <Card className="glass-card">
         <CardHeader>
