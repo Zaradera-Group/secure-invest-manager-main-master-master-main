@@ -15,6 +15,19 @@ const CERTIFICATE_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 const INVESTMENT_TYPES = ['Upfront', 'Monthly', 'Quarterly', 'At Maturity'] as const;
 const CURRENCIES = ['NGN', 'USD', 'GBP', 'EUR'] as const;
+const NEXT_OF_KIN_RELATIONSHIPS = [
+  'Father',
+  'Mother',
+  'Brother',
+  'Sister',
+  'Uncle',
+  'Auntie',
+  'Spouse',
+  'Child',
+  'Cousin',
+  'Friend',
+  'Other',
+] as const;
 
 export default function PublicInvestorIntake() {
   const { toast } = useToast();
@@ -30,11 +43,9 @@ export default function PublicInvestorIntake() {
     investmentAmount: '',
     startDate: '',
     tenure: '',
-    percentage: '',
     investmentType: 'Monthly',
     clientAccountNumber: '',
     clientBank: '',
-    broughtBy: 'Self',
     dateOfBirth: '',
     gender: '',
     occupation: '',
@@ -44,10 +55,6 @@ export default function PublicInvestorIntake() {
     nextOfKinPhone: '',
     nextOfKinRelationship: '',
     currencyCode: 'NGN',
-    investorCategory: 'nw',
-    categoryReferenceName: '',
-    categoryReferenceEmail: '',
-    categoryNotes: '',
     website: '',
   });
 
@@ -73,7 +80,6 @@ export default function PublicInvestorIntake() {
           ...form,
           investmentAmount: Number(form.investmentAmount),
           tenure: Number(form.tenure),
-          percentage: Number(form.percentage),
           gender: form.gender || null,
           dateOfBirth: form.dateOfBirth || null,
           occupation: form.occupation || null,
@@ -82,9 +88,6 @@ export default function PublicInvestorIntake() {
           nextOfKinName: form.nextOfKinName || null,
           nextOfKinPhone: form.nextOfKinPhone || null,
           nextOfKinRelationship: form.nextOfKinRelationship || null,
-          categoryReferenceName: form.categoryReferenceName || null,
-          categoryReferenceEmail: form.categoryReferenceEmail || null,
-          categoryNotes: form.categoryNotes || null,
           website: form.website || null,
           turnstileToken,
         }),
@@ -100,7 +103,7 @@ export default function PublicInvestorIntake() {
       setSubmissionLink('/landing');
       toast({
         title: 'Submission received',
-        description: 'The intake was queued for manual review by the investment manager.',
+        description: 'The details were queued for manual review.',
       });
     } catch (error) {
       toast({
@@ -125,7 +128,7 @@ export default function PublicInvestorIntake() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Your investor details were queued for manual review. No investor record was created automatically.
+              Your details were queued for manual review. No investor record was created automatically.
             </p>
             {submissionLink && (
               <Button asChild>
@@ -144,25 +147,14 @@ export default function PublicInvestorIntake() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background">
       <div className="mx-auto max-w-6xl px-4 py-10 lg:py-16">
-        <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
+        <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-accent font-semibold">Public Intake</p>
-            <h1 className="mt-2 text-3xl font-heading font-bold">Submit Investor Details</h1>
+            <h1 className="text-3xl font-heading font-bold">Submit Investor Details</h1>
             <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
-              This public link is separate from the internal investment form. It sends a review request to the manager, general manager, CEO, and the submitter by email without creating an investor automatically.
+              Complete the form below and submit the investor details for manual review before any record is created.
             </p>
           </div>
-          <Button asChild variant="outline">
-            <Link to="/login">Staff Login</Link>
-          </Button>
         </div>
-
-        <Card className="mb-6 border-dashed border-accent/30 bg-accent/5">
-          <CardContent className="p-4 text-sm text-muted-foreground space-y-2">
-            <p className="font-medium text-foreground">Public intake only</p>
-            <p>The internal investor creation flow still lives inside the staff workspace. This form only submits a review request.</p>
-          </CardContent>
-        </Card>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <Card className="glass-card">
@@ -218,9 +210,6 @@ export default function PublicInvestorIntake() {
               <Field label="Investment Amount" required>
                 <Input required type="number" min="1" value={form.investmentAmount} onChange={(e) => handleChange('investmentAmount', e.target.value)} />
               </Field>
-              <Field label="Interest Rate (%)" required>
-                <Input required type="number" min="0" step="0.01" value={form.percentage} onChange={(e) => handleChange('percentage', e.target.value)} />
-              </Field>
               <Field label="Tenure (months)" required>
                 <Input required type="number" min="1" value={form.tenure} onChange={(e) => handleChange('tenure', e.target.value)} />
               </Field>
@@ -233,9 +222,6 @@ export default function PublicInvestorIntake() {
               <Field label="Account Number" required>
                 <Input required value={form.clientAccountNumber} onChange={(e) => handleChange('clientAccountNumber', e.target.value)} />
               </Field>
-              <Field label="Brought By">
-                <Input value={form.broughtBy} onChange={(e) => handleChange('broughtBy', e.target.value)} />
-              </Field>
               <Field label="Occupation">
                 <Input value={form.occupation} onChange={(e) => handleChange('occupation', e.target.value)} />
               </Field>
@@ -246,26 +232,51 @@ export default function PublicInvestorIntake() {
           </Card>
 
           <Card className="glass-card">
-            <CardHeader><CardTitle>Optional Reference Details</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Next of Kin</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="Category Reference Name">
-                <Input value={form.categoryReferenceName} onChange={(e) => handleChange('categoryReferenceName', e.target.value)} />
-              </Field>
-              <Field label="Category Reference Email">
-                <Input type="email" value={form.categoryReferenceEmail} onChange={(e) => handleChange('categoryReferenceEmail', e.target.value)} />
-              </Field>
-              <Field label="Category Notes" className="md:col-span-2">
-                <Textarea value={form.categoryNotes} onChange={(e) => handleChange('categoryNotes', e.target.value)} />
-              </Field>
-              <Field label="Next of Kin Name">
+              <Field label="Full Name">
                 <Input value={form.nextOfKinName} onChange={(e) => handleChange('nextOfKinName', e.target.value)} />
               </Field>
-              <Field label="Next of Kin Phone">
+              <Field label="Phone Number">
                 <Input value={form.nextOfKinPhone} onChange={(e) => handleChange('nextOfKinPhone', e.target.value)} />
               </Field>
-              <Field label="Next of Kin Relationship">
-                <Input value={form.nextOfKinRelationship} onChange={(e) => handleChange('nextOfKinRelationship', e.target.value)} />
+              <Field label="Relationship">
+                <Select value={form.nextOfKinRelationship} onValueChange={(value) => handleChange('nextOfKinRelationship', value)}>
+                  <SelectTrigger><SelectValue placeholder="Select relationship" /></SelectTrigger>
+                  <SelectContent>
+                    {NEXT_OF_KIN_RELATIONSHIPS.map((relationship) => (
+                      <SelectItem key={relationship} value={relationship}>
+                        {relationship}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle>Declarations & Consent</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm leading-6 text-muted-foreground">
+              <p className="text-foreground/90">
+                I/We hereby declare that the information provided is true and complete. I/We understand and accept the
+                terms and agree to comply with the partnership.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                <div className="rounded-lg border bg-secondary/20 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-2">Partners Signature</p>
+                  <div className="border-b border-dashed border-foreground/30 pt-8" />
+                </div>
+                <div className="rounded-lg border bg-secondary/20 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-2">Date</p>
+                  <div className="border-b border-dashed border-foreground/30 pt-8" />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground pt-2">
+                Partners Signature: _____________________________________________ Date: ______ /________/ _________
+              </p>
             </CardContent>
           </Card>
 
@@ -290,9 +301,6 @@ export default function PublicInvestorIntake() {
                 onStatusChange={setTurnstileStatus}
               />
               {turnstileStatus && <p className="text-xs text-muted-foreground">{turnstileStatus}</p>}
-              <p className="text-xs text-muted-foreground">
-                This keeps the public intake protected from automated abuse.
-              </p>
             </CardContent>
           </Card>
 

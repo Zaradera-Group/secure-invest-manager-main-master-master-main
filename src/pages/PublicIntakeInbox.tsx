@@ -23,7 +23,7 @@ type PublicIntakeRequest = {
   start_date: string;
   maturity_date: string;
   tenure: number;
-  percentage: number;
+  percentage?: number | null;
   investment_type: string;
   client_account_number: string;
   client_bank: string;

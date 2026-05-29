@@ -31,6 +31,7 @@ const publicInvestorIntakeSchema = z.object({
   categoryNotes: z.string().optional().nullable(),
   turnstileToken: z.string().min(1),
   website: z.string().optional().nullable(),
+  percentage: z.coerce.number().positive().optional().nullable(),
 });
 
 type PublicInvestorIntakeInput = z.infer<typeof publicInvestorIntakeSchema>;
@@ -74,7 +75,7 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
     start_date: input.startDate,
     maturity_date: maturityDate,
     tenure: input.tenure,
-    percentage: input.percentage,
+    percentage: input.percentage ?? null,
     investment_type: input.investmentType,
     client_account_number: input.clientAccountNumber.trim(),
     client_bank: input.clientBank.trim(),
