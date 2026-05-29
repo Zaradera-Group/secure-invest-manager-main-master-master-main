@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Users, PlusCircle, Bell, Settings, LogOut, TrendingUp, ChevronLeft, ChevronRight, X, BarChart3,
+  LayoutDashboard, Users, PlusCircle, Bell, Settings, LogOut, TrendingUp, ChevronLeft, ChevronRight, X, BarChart3, Inbox,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
@@ -31,6 +31,7 @@ const navItems: NavItem[] = [
   { id: 'investors', icon: Users, label: 'Investors', path: '/investors' },
   { id: 'certificates', icon: BarChart3, label: 'Certificates', path: '/certificates' },
   { id: 'new-investment', icon: PlusCircle, label: 'New Investment', path: '/investments/new' },
+  { id: 'public-intake-inbox', icon: Inbox, label: 'Public Intake', path: '/public-intake-inbox', roles: ['investment_manager', 'general_manager', 'admin', 'super_admin'] as const },
   { id: 'notifications', icon: Bell, label: 'Notifications', path: '/notifications' },
   { id: 'reconciliation', icon: BarChart3, label: 'Reconciliation', path: '/settlement-discrepancies' },
   { id: 'notification-audit', icon: BarChart3, label: 'Notification Audit', path: '/notification-audit', roles: ['admin', 'super_admin'] as const },

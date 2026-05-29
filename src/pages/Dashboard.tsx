@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
+  Copy,
 } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
@@ -23,6 +24,7 @@ import {
 import { useCertificateInbox, usePendingApprovals } from '@/hooks/useCertificates';
 import { useDashboardNotifications, useMarkDashboardNotificationRead } from '@/hooks/useDashboardNotifications';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { daysUntilMaturity } from '@/types/investment';
 
 const container = {
@@ -51,6 +53,7 @@ export default function Dashboard({
   description = "Welcome back. Here's your investment overview.",
 }: DashboardProps) {
   const { role } = useAuth();
+  const { toast } = useToast();
   const { data: portfolioSummary, isLoading: isSummaryLoading } = useDashboardPortfolioSummary(scope);
   const { data: upcomingMaturities = [], isLoading: isUpcomingLoading } = useDashboardUpcomingMaturitiesByScope(5, scope);
   const { data: investmentTypeSummary = [], isLoading: isTypeSummaryLoading } = useDashboardInvestmentTypeSummaryByScope(scope);
@@ -59,7 +62,7 @@ export default function Dashboard({
   const markDashboardNotificationRead = useMarkDashboardNotificationRead();
   const { data: pendingApprovals = 0 } = usePendingApprovals(scope);
   const isLoading = isSummaryLoading || isUpcomingLoading || isTypeSummaryLoading;
-  const foreignCurrencyCodes = portfolioSummary?.foreign_currency_codes ?? [];
+  const foreignCurrencyCodes = useMemo(() => portfolioSummary?.foreign_currency_codes ?? [], [portfolioSummary?.foreign_currency_codes]);
   const hasForeignCurrency = foreignCurrencyCodes.length > 0;
 
   const stats = useMemo(() => {
@@ -149,6 +152,24 @@ export default function Dashboard({
 
   const pieColors = ['#f97316', '#0f766e', '#2563eb', '#7c3aed'];
   const hasChartData = investmentTypeChartData.some((entry) => entry.investors > 0 || entry.value > 0);
+  const canUsePublicIntakeTools = !!role && ['investment_manager', 'general_manager', 'super_admin', 'admin'].includes(role);
+  const publicIntakeLink = `${globalThis.location.origin}/investor-intake`;
+
+  const handleCopyPublicIntakeLink = async () => {
+    try {
+      await navigator.clipboard.writeText(publicIntakeLink);
+      toast({
+        title: 'Copied',
+        description: 'Public intake link copied to clipboard.',
+      });
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Your browser blocked clipboard access.',
+        variant: 'destructive',
+      });
+    }
+  };
 
   if (isLoading) {
     return (
@@ -174,8 +195,23 @@ export default function Dashboard({
   return (
     <motion.div variants={container} initial="hidden" animate="show" exit="exit" className="space-y-4 md:space-y-6">
       <motion.div variants={item}>
-        <h1 className="text-xl md:text-2xl font-heading font-bold">{title}</h1>
-        <p className="text-muted-foreground text-sm mt-1">{description}</p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h1 className="text-xl md:text-2xl font-heading font-bold">{title}</h1>
+            <p className="text-muted-foreground text-sm mt-1">{description}</p>
+          </div>
+          {canUsePublicIntakeTools && (
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link to="/public-intake-inbox">Public Intake Inbox</Link>
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleCopyPublicIntakeLink}>
+                <Copy className="w-4 h-4 mr-2" />
+                Copy public intake link
+              </Button>
+            </div>
+          )}
+        </div>
         {hasForeignCurrency && (
           <div className="mt-3">
             <Badge variant="outline">

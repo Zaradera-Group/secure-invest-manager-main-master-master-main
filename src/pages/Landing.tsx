@@ -49,7 +49,7 @@ export default function Landing() {
   const { data: investors = [], isLoading: investorLoading } = useInvestors();
   const { data: announcementsResult, isLoading: announcementsLoading } = useAnnouncements();
   const [activeSlide, setActiveSlide] = useState(0);
-  const fetchedAnnouncements = announcementsResult?.data ?? [];
+  const fetchedAnnouncements = useMemo(() => announcementsResult?.data ?? [], [announcementsResult?.data]);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 4500);
@@ -198,8 +198,8 @@ export default function Landing() {
       </header>
 
       {/* Hero */}
-      <section className="max-w-6xl mx-auto px-6 py-24 text-center">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+        <section className="max-w-6xl mx-auto px-6 py-24 text-center">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-accent/10 text-accent text-xs font-medium mb-6">
             <Shield className="w-3.5 h-3.5" /> Secure Investment Management
           </div>
@@ -209,13 +209,16 @@ export default function Landing() {
           <p className="mt-6 text-muted-foreground text-lg max-w-2xl mx-auto">
             Track investor portfolios, automate maturity reminders, and maintain secure records — all in one powerful platform built for Zaradera Credit Limited.
           </p>
-          <div className="mt-10 flex items-center justify-center gap-4">
-            <Button asChild size="lg" className="px-8">
-              <Link to="/login">Get Started <ArrowRight className="w-4 h-4 ml-2" /></Link>
-            </Button>
-          </div>
-        </motion.div>
-      </section>
+            <div className="mt-10 flex items-center justify-center gap-4">
+              <Button asChild size="lg" className="px-8">
+                <Link to="/login">Get Started <ArrowRight className="w-4 h-4 ml-2" /></Link>
+              </Button>
+              <Button asChild size="lg" variant="outline" className="px-8">
+                <Link to="/investor-intake">External Public Intake</Link>
+              </Button>
+            </div>
+          </motion.div>
+        </section>
 
       {/* Quick actions */}
       <section className="max-w-6xl mx-auto px-6 pb-10">
@@ -223,17 +226,20 @@ export default function Landing() {
           <div className="p-6 bg-card border border-border/50 rounded-xl shadow-sm">
             <h2 className="text-xl font-heading font-semibold mb-2">Quick actions</h2>
             <p className="text-sm text-muted-foreground mb-4">Get started with the most common tasks in one click.</p>
-            <div className="flex flex-wrap gap-2">
-              <Button asChild size="sm" className="h-9">
-                <Link to="/investors">Manage Investors</Link>
-              </Button>
-              <Button asChild size="sm" className="h-9">
-                <Link to="/investments/new">Add Investment</Link>
-              </Button>
-              <Button asChild size="sm" className="h-9">
-                <Link to="/notifications">View Notifications</Link>
-              </Button>
-            </div>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild size="sm" className="h-9">
+                  <Link to="/investors">Manage Investors</Link>
+                </Button>
+                <Button asChild size="sm" className="h-9">
+                  <Link to="/investments/new">Add Investment</Link>
+                </Button>
+                <Button asChild size="sm" variant="outline" className="h-9">
+                  <Link to="/investor-intake">External Public Intake</Link>
+                </Button>
+                <Button asChild size="sm" className="h-9">
+                  <Link to="/notifications">View Notifications</Link>
+                </Button>
+              </div>
           </div>
           <div className="p-6 bg-card border border-border/50 rounded-xl shadow-sm">
             <h2 className="text-xl font-heading font-semibold mb-2">AUM by investment type</h2>

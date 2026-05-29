@@ -10,6 +10,8 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import Splash from "./pages/Splash";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
+import PublicInvestorIntake from "./pages/PublicInvestorIntake";
+import PublicIntakeInbox from "./pages/PublicIntakeInbox";
 import Dashboard from "./pages/Dashboard";
 import InvestorsList from "./pages/InvestorsList";
 import InvestorDetail from "./pages/InvestorDetail";
@@ -57,6 +59,7 @@ const AnimatedRoutes = () => {
       <Routes location={location} key={location.pathname}>
         <Route path="/" element={<Splash />} />
         <Route path="/landing" element={<Landing />} />
+        <Route path="/investor-intake" element={<PublicInvestorIntake />} />
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<RoleDashboardRedirect />} />
@@ -71,6 +74,7 @@ const AnimatedRoutes = () => {
           <Route path="/investors/:id" element={<InvestorDetail />} />
           <Route path="/investors/:id/edit" element={<ProtectedRoute allowedRoles={['investment_manager', 'admin']}><NewInvestment /></ProtectedRoute>} />
           <Route path="/investments/new" element={<NewInvestment />} />
+          <Route path="/public-intake-inbox" element={<ProtectedRoute allowedRoles={['investment_manager', 'general_manager', 'admin', 'super_admin']}><PublicIntakeInbox /></ProtectedRoute>} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settlement-discrepancies" element={<SettlementDiscrepancies />} />
           <Route path="/notification-audit" element={<ProtectedRoute allowedRoles={['admin', 'super_admin']}><NotificationAudit /></ProtectedRoute>} />

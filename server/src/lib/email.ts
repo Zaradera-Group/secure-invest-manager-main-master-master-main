@@ -24,6 +24,10 @@ const sendEmail = async ({ email, subject, html }: EmailRecipient) => {
   });
 };
 
+export const sendPlainEmail = async (email: string, subject: string, html: string) => {
+  await sendEmail({ email, subject, html });
+};
+
 export const sendManagerNotificationEmail = async (email: string, certificate: CertificateRecord) => {
   await sendEmail({
     email,

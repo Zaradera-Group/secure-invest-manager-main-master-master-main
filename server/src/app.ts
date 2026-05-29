@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { authRouter } from "./routes/auth.js";
 import { certificatesRouter } from "./routes/certificates.js";
+import { publicIntakeRouter } from "./routes/public-intake.js";
 
 export const app = express();
 
@@ -18,6 +19,7 @@ app.get("/health", (_request, response) => {
 });
 
 app.use("/auth", authRouter);
+app.use("/public", publicIntakeRouter);
 app.use("/certificates", certificatesRouter);
 
 app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => {

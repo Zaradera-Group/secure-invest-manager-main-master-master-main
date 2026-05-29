@@ -36,6 +36,8 @@ const envSchema = z.object({
     .transform((value) => value === true || value === "true"),
   BIRTHDAY_SMS_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   BIRTHDAY_SMS_TIMEZONE: z.string().optional().transform((value) => value?.trim() || undefined),
+  PUBLIC_INTAKE_ASSIGNEE_USER_ID: z.string().optional().transform((value) => value?.trim() || undefined),
+  PUBLIC_INTAKE_NOTIFY_EMAIL: z.string().optional().transform((value) => value?.trim() || undefined),
   TURNSTILE_SECRET_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   TURNSTILE_TEST_MODE: z
     .union([z.string(), z.boolean()])
