@@ -11,7 +11,6 @@ const publicInvestorIntakeSchema = z.object({
   investmentAmount: z.coerce.number().positive(),
   startDate: z.string().min(1),
   tenure: z.coerce.number().int().positive(),
-  percentage: z.coerce.number().positive(),
   investmentType: z.enum(["Upfront", "Monthly", "Quarterly", "At Maturity"]),
   clientAccountNumber: z.string().min(4),
   clientBank: z.string().min(2),
