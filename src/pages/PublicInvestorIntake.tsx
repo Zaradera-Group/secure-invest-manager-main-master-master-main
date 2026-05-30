@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -34,6 +35,12 @@ export default function PublicInvestorIntake() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submissionLink, setSubmissionLink] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpStatus, setOtpStatus] = useState<string | null>(null);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  const [consentToken, setConsentToken] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileStatus, setTurnstileStatus] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -59,7 +66,111 @@ export default function PublicInvestorIntake() {
   });
 
   const handleChange = (field: string, value: string) => {
+    if ((field === 'phone' || field === 'email') && value !== form[field]) {
+      setOtpCode('');
+      setOtpStatus(null);
+      setIsPhoneVerified(false);
+      setConsentToken(null);
+    }
+
     setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleSendOtp = async () => {
+    if (!form.phone.trim()) {
+      setOtpStatus('Enter the phone number first.');
+      return;
+    }
+
+    setIsSendingOtp(true);
+    setOtpStatus(null);
+
+    try {
+      const response = await fetch(`${CERTIFICATE_API_URL}/public/investor-intake/otp/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          phone: form.phone,
+          email: form.email,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.message ?? 'Unable to send the verification code.');
+      }
+
+      setOtpStatus('Verification code sent to the phone number entered.');
+      toast({
+        title: 'Code sent',
+        description: 'The investor will receive the same one-time code by phone and email.',
+      });
+    } catch (error) {
+      setOtpStatus(error instanceof Error ? error.message : 'Could not send the verification code.');
+      toast({
+        title: 'OTP failed',
+        description: error instanceof Error ? error.message : 'Could not send the verification code.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!form.phone.trim()) {
+      setOtpStatus('Enter the phone number first.');
+      return;
+    }
+
+    if (otpCode.length < 4) {
+      setOtpStatus('Enter the full verification code.');
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setOtpStatus(null);
+
+    try {
+      const response = await fetch(`${CERTIFICATE_API_URL}/public/investor-intake/otp/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          phone: form.phone,
+          code: otpCode,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.message ?? 'Unable to verify the code.');
+      }
+
+      setConsentToken(data?.consentToken ?? null);
+      setIsPhoneVerified(true);
+      setOtpStatus('Phone number verified. Consent has been captured.');
+      toast({
+        title: 'Verified',
+        description: 'The investor phone number has been verified successfully.',
+      });
+    } catch (error) {
+      setIsPhoneVerified(false);
+      setConsentToken(null);
+      setOtpStatus(error instanceof Error ? error.message : 'Could not verify the code.');
+      toast({
+        title: 'Verification failed',
+        description: error instanceof Error ? error.message : 'Could not verify the code.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsVerifyingOtp(false);
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -67,6 +178,10 @@ export default function PublicInvestorIntake() {
     setIsSubmitting(true);
 
     try {
+      if (!isPhoneVerified || !consentToken) {
+        throw new Error('Please verify the phone number to capture consent before submitting.');
+      }
+
       if (!turnstileToken) {
         throw new Error('Please complete the human verification challenge before submitting.');
       }
@@ -89,6 +204,7 @@ export default function PublicInvestorIntake() {
           nextOfKinPhone: form.nextOfKinPhone || null,
           nextOfKinRelationship: form.nextOfKinRelationship || null,
           website: form.website || null,
+          consentToken,
           turnstileToken,
         }),
       });
@@ -259,24 +375,50 @@ export default function PublicInvestorIntake() {
             <CardHeader>
               <CardTitle>Declarations & Consent</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 text-sm leading-6 text-muted-foreground">
+            <CardContent className="space-y-5 text-sm leading-6 text-muted-foreground">
               <p className="text-foreground/90">
                 I/We hereby declare that the information provided is true and complete. I/We understand and accept the
                 terms and agree to comply with the partnership.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <div className="rounded-lg border bg-secondary/20 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-2">Partners Signature</p>
-                  <div className="border-b border-dashed border-foreground/30 pt-8" />
+              <div className="rounded-lg border bg-secondary/20 p-4 space-y-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">OTP Consent</p>
+                  <p className="mt-1 text-sm text-foreground/80">
+                    Request a one-time code to the phone number entered above. Enter the code below to confirm consent.
+                  </p>
                 </div>
-                <div className="rounded-lg border bg-secondary/20 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-2">Date</p>
-                  <div className="border-b border-dashed border-foreground/30 pt-8" />
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" onClick={handleSendOtp} disabled={isSendingOtp || !form.phone.trim()}>
+                    {isSendingOtp ? 'Sending OTP...' : 'Send OTP to Phone & Email'}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleVerifyOtp}
+                    disabled={isVerifyingOtp || otpCode.length < 4 || !form.phone.trim()}
+                  >
+                    {isVerifyingOtp ? 'Verifying...' : 'Verify OTP'}
+                  </Button>
                 </div>
+                <InputOTP
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(value) => setOtpCode(value)}
+                  disabled={isPhoneVerified}
+                >
+                  <InputOTPGroup>
+                    <InputOTPSlot index={0} />
+                    <InputOTPSlot index={1} />
+                    <InputOTPSlot index={2} />
+                    <InputOTPSlot index={3} />
+                    <InputOTPSlot index={4} />
+                    <InputOTPSlot index={5} />
+                  </InputOTPGroup>
+                </InputOTP>
+                {otpStatus && <p className={`text-xs ${isPhoneVerified ? 'text-success' : 'text-muted-foreground'}`}>{otpStatus}</p>}
+                <p className="text-xs text-muted-foreground">
+                  By verifying the OTP, the investor confirms consent and acknowledges the declaration above. The same code is delivered to both phone and email.
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground pt-2">
-                Partners Signature: _____________________________________________ Date: ______ /________/ _________
-              </p>
             </CardContent>
           </Card>
 
@@ -304,10 +446,16 @@ export default function PublicInvestorIntake() {
             </CardContent>
           </Card>
 
+          {!isPhoneVerified && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Submission is locked until the OTP is received and verified.
+            </div>
+          )}
+
           <div className="flex items-center justify-end">
-            <Button type="submit" disabled={isSubmitting || !turnstileToken}>
+            <Button type="submit" disabled={isSubmitting || !turnstileToken || !isPhoneVerified || !consentToken}>
               <Send className="w-4 h-4 mr-2" />
-              {isSubmitting ? 'Submitting...' : 'Submit Investor Intake'}
+              {isSubmitting ? 'Submitting...' : isPhoneVerified ? 'Submit Investor Intake' : 'Verify OTP to Continue'}
             </Button>
           </div>
         </form>

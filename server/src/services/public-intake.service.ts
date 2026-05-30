@@ -3,6 +3,19 @@ import { adminSupabase } from "../lib/supabase.js";
 import { sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
+import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
+import { sendPlainSms } from "../lib/sms.js";
+import {
+  createOtpExpiryDate,
+  generatePublicIntakeOtpCode,
+  getOtpMaxAttempts,
+  hashPublicIntakeOtpCode,
+  isOtpAttemptsExceeded,
+  isOtpConsumed,
+  isOtpExpired,
+  normalizeOtp,
+  verifyPublicIntakeOtpCode,
+} from "../lib/public-intake-otp.js";
 
 const publicInvestorIntakeSchema = z.object({
   name: z.string().min(2),
@@ -31,6 +44,7 @@ const publicInvestorIntakeSchema = z.object({
   turnstileToken: z.string().min(1),
   website: z.string().optional().nullable(),
   percentage: z.coerce.number().positive().optional().nullable(),
+  consentToken: z.string().min(1),
 });
 
 type PublicInvestorIntakeInput = z.infer<typeof publicInvestorIntakeSchema>;
@@ -48,6 +62,7 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
   }
 
   await verifyTurnstileToken(input.turnstileToken, context.ip ?? null);
+  verifyPublicIntakeConsentToken(input.consentToken, input.phone);
 
   const assigneeUserId = env.PUBLIC_INTAKE_ASSIGNEE_USER_ID;
 
@@ -148,6 +163,156 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
   };
 }
 
+export async function sendPublicIntakeOtp(payload: unknown) {
+  const schema = z.object({
+    phone: z.string().min(7),
+    email: z.string().email().optional().nullable(),
+  });
+
+  const input = schema.parse(payload);
+  const codeTarget = normalizePhoneNumber(input.phone);
+  const emailTarget = input.email?.trim().toLowerCase() ?? null;
+  assertOtpConfigured();
+
+  const otpCode = generatePublicIntakeOtpCode();
+  const codeHash = hashPublicIntakeOtpCode(otpCode);
+  const expiresAt = createOtpExpiryDate();
+
+  await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("phone", codeTarget)
+    .is("consumed_at", null);
+
+  const { error: insertError } = await adminSupabase.from("public_intake_otp_codes").insert({
+    phone: codeTarget,
+    email: emailTarget,
+    code_hash: codeHash,
+    attempt_count: 0,
+    max_attempts: getOtpMaxAttempts(),
+    expires_at: expiresAt,
+  });
+
+  if (insertError) {
+    throw new Error(`Failed to create OTP record: ${insertError.message}`);
+  }
+
+  const deliveryTasks: Promise<unknown>[] = [];
+  const channels: string[] = [];
+
+  if (canSendPublicIntakeSms()) {
+    deliveryTasks.push(
+      sendPlainSms(
+        codeTarget,
+        `Your Zaradera public intake verification code is ${otpCode}. It expires in 10 minutes.`,
+      ),
+    );
+    channels.push("sms");
+  }
+
+  if (emailTarget && canSendPublicIntakeEmail()) {
+    deliveryTasks.push(
+      sendPlainEmail(
+        emailTarget,
+        "Your Zaradera public intake verification code",
+        buildOtpEmailHtml(otpCode),
+      ),
+    );
+    channels.push("email");
+  }
+
+  if (deliveryTasks.length === 0) {
+    throw new Error("No OTP delivery channel is configured");
+  }
+
+  const deliveryResults = await Promise.allSettled(deliveryTasks);
+  const failedDeliveries = deliveryResults.filter((result) => result.status === "rejected");
+  if (failedDeliveries.length > 0) {
+    throw new Error("Failed to deliver verification code");
+  }
+
+  return {
+    message: channels.includes("email") && channels.includes("sms")
+      ? "Verification code sent to phone and email"
+      : channels.includes("email")
+        ? "Verification code sent to email"
+        : "Verification code sent to phone",
+  };
+}
+
+export async function verifyPublicIntakeOtp(payload: unknown) {
+  const schema = z.object({
+    phone: z.string().min(7),
+    code: z.string().min(4).max(10),
+  });
+
+  const input = schema.parse(payload);
+  const codeTarget = normalizePhoneNumber(input.phone);
+  assertOtpConfigured();
+  const normalizedCode = normalizeOtp(input.code);
+
+  const { data: record, error } = await adminSupabase
+    .from("public_intake_otp_codes")
+    .select("*")
+    .eq("phone", codeTarget)
+    .is("consumed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!record) {
+    throw new Error("No active verification code was found");
+  }
+
+  const typedRecord = record as {
+    id: string;
+    phone: string;
+    email: string | null;
+    code_hash: string;
+    attempt_count: number;
+    max_attempts: number;
+    expires_at: string;
+    consumed_at: string | null;
+    created_at: string;
+  };
+
+  if (isOtpExpired(typedRecord)) {
+    throw new Error("Verification code has expired");
+  }
+
+  if (isOtpConsumed(typedRecord)) {
+    throw new Error("Verification code has already been used");
+  }
+
+  if (isOtpAttemptsExceeded(typedRecord)) {
+    throw new Error("Verification attempts exceeded");
+  }
+
+  const matches = verifyPublicIntakeOtpCode(normalizedCode, typedRecord);
+
+  if (!matches) {
+    await adminSupabase
+      .from("public_intake_otp_codes")
+      .update({ attempt_count: typedRecord.attempt_count + 1 })
+      .eq("id", typedRecord.id);
+    throw new Error("Verification failed");
+  }
+
+  await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("id", typedRecord.id);
+
+  return {
+    message: "Phone number verified",
+    consentToken: createPublicIntakeConsentToken(codeTarget),
+  };
+}
+
 async function resolveAssigneeEmail(assigneeUserId: string, fallbackEmail?: string | null) {
   if (fallbackEmail) {
     return fallbackEmail;
@@ -215,6 +380,40 @@ function calculateMaturityDate(startDate: string, tenure: number) {
   const date = new Date(startDate);
   date.setMonth(date.getMonth() + tenure);
   return date.toISOString().split("T")[0];
+}
+
+function normalizePhoneNumber(phone: string) {
+  return phone.trim().replace(/\s+/g, "");
+}
+
+function assertOtpConfigured() {
+  if (!env.PUBLIC_INTAKE_CONSENT_TOKEN_SECRET) {
+    throw new Error("Public intake OTP is not configured");
+  }
+}
+
+function canSendPublicIntakeSms() {
+  return Boolean(
+    env.SMS_DELIVERY_ENABLED
+    && env.TWILIO_ACCOUNT_SID
+    && env.TWILIO_AUTH_TOKEN
+    && (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER),
+  );
+}
+
+function canSendPublicIntakeEmail() {
+  return Boolean(env.EMAIL_DELIVERY_ENABLED && env.RESEND_API_KEY && env.RESEND_FROM_EMAIL);
+}
+
+function buildOtpEmailHtml(code: string) {
+  return `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+      <h2 style="margin: 0 0 12px;">Verify Your Public Intake</h2>
+      <p>Your verification code is:</p>
+      <div style="font-size: 28px; letter-spacing: 0.2em; font-weight: 700; margin: 16px 0;">${code}</div>
+      <p>This code expires in 10 minutes and can only be used once.</p>
+    </div>
+  `;
 }
 
 function buildPublicIntakeEmailHtml(args: {

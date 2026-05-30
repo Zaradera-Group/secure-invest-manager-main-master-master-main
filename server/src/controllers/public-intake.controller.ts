@@ -1,6 +1,10 @@
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
-import { createPublicInvestorIntake } from "../services/public-intake.service.js";
+import {
+  createPublicInvestorIntake,
+  sendPublicIntakeOtp,
+  verifyPublicIntakeOtp,
+} from "../services/public-intake.service.js";
 
 export const submitPublicInvestorIntake = async (request: Request, response: Response) => {
   try {
@@ -30,5 +34,42 @@ export const submitPublicInvestorIntake = async (request: Request, response: Res
           ? 403
           : 500;
     response.status(status).json({ message });
+  }
+};
+
+export const requestPublicIntakeOtp = async (request: Request, response: Response) => {
+  try {
+    const result = await sendPublicIntakeOtp(request.body);
+    response.status(202).json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({
+        message: "Validation failed",
+        issues: error.flatten(),
+      });
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : "Unexpected error";
+    const status = message.includes("not configured") ? 503 : 500;
+    response.status(status).json({ message });
+  }
+};
+
+export const confirmPublicIntakeOtp = async (request: Request, response: Response) => {
+  try {
+    const result = await verifyPublicIntakeOtp(request.body);
+    response.json(result);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      response.status(400).json({
+        message: "Validation failed",
+        issues: error.flatten(),
+      });
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : "Unexpected error";
+    response.status(400).json({ message });
   }
 };

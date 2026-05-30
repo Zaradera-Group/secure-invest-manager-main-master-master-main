@@ -279,3 +279,6 @@ export const sendVerificationCode = async (to: string, channel: VerificationChan
 
 export const verifySmsCode = async (to: string, code: string) =>
   smsNotificationService.verifyCode(to, code);
+
+export const sendPlainSms = async (to: string, message: string) =>
+  smsNotificationService.sendSms(to, message);
