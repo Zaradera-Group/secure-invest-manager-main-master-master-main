@@ -53,8 +53,9 @@ export const getLatestCertificateByInvestor = async (request: Request, response:
   try {
     const investorEmail = typeof request.query.email === "string" ? request.query.email : "";
     const investorName = typeof request.query.name === "string" ? request.query.name : "";
+    const investorId = typeof request.query.investorId === "string" ? request.query.investorId : null;
 
-    if (!investorEmail || !investorName) {
+    if ((!investorEmail || !investorName) && !investorId) {
       response.status(400).json({ message: "Investor email and name are required" });
       return;
     }
@@ -63,6 +64,7 @@ export const getLatestCertificateByInvestor = async (request: Request, response:
       request.authUser!,
       investorEmail,
       investorName,
+      investorId,
     );
 
     response.json(certificate);

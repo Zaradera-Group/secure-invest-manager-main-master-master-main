@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -10,6 +11,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDeleteInvestor, useInvestor } from '@/hooks/useInvestors';
 import { CertificateWorkflowCard } from '@/components/certificates/CertificateWorkflowCard';
+import { ConfirmInvestorDeleteDialog } from '@/components/investors/ConfirmInvestorDeleteDialog';
 import { formatDate, formatInvestorCurrency, getStatusColor } from '@/lib/format';
 import { getInvestorCategoryBadgeClass, getInvestorCategoryLabel, getInvestorCategoryShortLabel } from '@/lib/investorCategories';
 import { daysUntilMaturity } from '@/types/investment';
@@ -24,6 +26,7 @@ export default function InvestorDetail() {
   const { toast } = useToast();
   const { data: investor, isLoading, error } = useInvestor(id);
   const deleteInvestor = useDeleteInvestor();
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   if (isLoading) {
     return <div className="space-y-6"><Skeleton className="h-10 w-64" /><div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><Skeleton className="h-80" /><Skeleton className="h-80 lg:col-span-2" /></div></div>;
@@ -78,15 +81,13 @@ export default function InvestorDetail() {
   const canDeleteInvestor = role === 'investment_manager' || role === 'general_manager' || role === 'admin' || role === 'super_admin';
 
   const handleDeleteInvestor = async () => {
-    const confirmed = globalThis.confirm(`Delete investor "${investor.name}"? This action cannot be undone.`);
-    if (!confirmed) return;
-
     try {
       await deleteInvestor.mutateAsync(investor.id);
       toast({
         title: 'Investor deleted',
         description: `${investor.name} was removed successfully.`,
       });
+      setIsDeleteDialogOpen(false);
       navigate(getDefaultDashboardPath(role), { replace: true });
     } catch (deleteError) {
       toast({
@@ -132,7 +133,7 @@ export default function InvestorDetail() {
               type="button"
               variant="destructive"
               size="sm"
-              onClick={handleDeleteInvestor}
+              onClick={() => setIsDeleteDialogOpen(true)}
               disabled={deleteInvestor.isPending}
             >
               <Trash2 className="w-4 h-4 mr-2" />
@@ -209,6 +210,14 @@ export default function InvestorDetail() {
       </div>
 
       <CertificateWorkflowCard investor={investor} />
+
+      <ConfirmInvestorDeleteDialog
+        open={isDeleteDialogOpen}
+        investorName={investor.name}
+        isDeleting={deleteInvestor.isPending}
+        onOpenChange={setIsDeleteDialogOpen}
+        onConfirm={() => void handleDeleteInvestor()}
+      />
     </motion.div>
   );
 }

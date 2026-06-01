@@ -45,6 +45,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
   const navigate = useNavigate();
   const { toast } = useToast();
   const { data: certificate, isLoading } = useInvestorCertificate({
+    id: investor.id,
     name: investor.name,
     email: investor.email,
   });

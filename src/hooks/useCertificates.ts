@@ -23,6 +23,7 @@ export type WorkflowCertificateStatus =
 
 export type WorkflowCertificate = {
   id: string;
+  investor_id?: string | null;
   investor_name: string;
   investor_email: string;
   amount: number;
@@ -73,7 +74,7 @@ type WorkflowInvestor = {
   investment_type?: 'Upfront' | 'Monthly' | 'Quarterly' | 'At Maturity';
 };
 
-export function useInvestorCertificate(investor?: Pick<WorkflowInvestor, 'name' | 'email'>) {
+export function useInvestorCertificate(investor?: Pick<WorkflowInvestor, 'id' | 'name' | 'email'>) {
   const { role } = useAuth();
 
   return useQuery({
@@ -93,6 +94,10 @@ export function useInvestorCertificate(investor?: Pick<WorkflowInvestor, 'name' 
         email: investor.email.toLowerCase(),
         name: investor.name,
       });
+
+      if (investor.id) {
+        query.set('investorId', investor.id);
+      }
 
       const response = await fetch(`${CERTIFICATE_API_URL}/certificates/by-investor?${query.toString()}`, {
         method: 'GET',
@@ -203,7 +208,7 @@ export function useManageInvestorCertificate() {
     onSuccess: (result, variables) => {
       const certificateId = result.certificateId ?? variables.certificateId;
 
-      queryClient.invalidateQueries({ queryKey: ['investor-certificate', variables.investor.email, variables.investor.name] });
+      queryClient.invalidateQueries({ queryKey: ['investor-certificate'] });
       queryClient.invalidateQueries({ queryKey: ['certificate-approval-events'] });
       queryClient.invalidateQueries({ queryKey: ['certificate-inbox'] });
       queryClient.invalidateQueries({ queryKey: ['pending-approvals'] });
@@ -337,23 +342,38 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
           certificate.status === 'pending_general_manager' || certificate.created_by === user.id,
         );
       }
+      const investorIds = [...new Set(certificateRows.map((certificate) => certificate.investor_id).filter((value): value is string => Boolean(value)))];
       const investorEmails = [...new Set(certificateRows.map((certificate) => certificate.investor_email.toLowerCase()))];
-      const { data: investors, error: investorError } = await supabase
-        .from('investors')
-        .select('id, name, email, investor_category')
-        .in('email', investorEmails);
+      const [investorsByIdResult, investorsByEmailResult] = await Promise.all([
+        investorIds.length
+          ? supabase
+              .from('investors')
+              .select('id, name, email, investor_category')
+              .in('id', investorIds)
+          : Promise.resolve({ data: [], error: null } as const),
+        investorEmails.length
+          ? supabase
+              .from('investors')
+              .select('id, name, email, investor_category')
+              .in('email', investorEmails)
+          : Promise.resolve({ data: [], error: null } as const),
+      ]);
 
-      if (investorError) throw investorError;
+      if (investorsByIdResult.error) throw investorsByIdResult.error;
+      if (investorsByEmailResult.error) throw investorsByEmailResult.error;
 
-      const investorMap = new Map(
-        ((investors ?? []) as Array<{ id: string; name: string; email: string; investor_category: string | null }>).map((investor) => [
-          `${investor.email.toLowerCase()}::${investor.name}`,
-          investor,
-        ]),
-      );
+      const investors = [...(investorsByIdResult.data ?? []), ...(investorsByEmailResult.data ?? [])];
+
+      const investorMap = new Map<string, { id: string; name: string; email: string; investor_category: string | null }>();
+      ((investors ?? []) as Array<{ id: string; name: string; email: string; investor_category: string | null }>).forEach((investor) => {
+        investorMap.set(investor.id, investor);
+        investorMap.set(`${investor.email.toLowerCase()}::${investor.name}`, investor);
+      });
 
       return certificateRows.map((certificate) => {
-        const matchedInvestor = investorMap.get(`${certificate.investor_email.toLowerCase()}::${certificate.investor_name}`);
+        const matchedInvestor =
+          investorMap.get((certificate as WorkflowCertificate & { investor_id?: string | null }).investor_id ?? '')
+          ?? investorMap.get(`${certificate.investor_email.toLowerCase()}::${certificate.investor_name}`);
 
         return {
         certificate,

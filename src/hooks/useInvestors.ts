@@ -4,6 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Database } from '@/integrations/supabase/types';
 import type { QueryClient } from '@tanstack/react-query';
 
+const INVESTOR_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+
 type InvestorRow = Database['public']['Tables']['investors']['Row'];
 type InvestorInsert = Database['public']['Tables']['investors']['Insert'];
 type DashboardPortfolioSummaryRow = Database['public']['Views']['dashboard_portfolio_summary']['Row'];
@@ -141,6 +143,53 @@ function invalidateInvestorRelatedQueries(queryClient: QueryClient, includeDelet
   if (includeDeleteExtras) {
     invalidateQueryKeys(queryClient, INVESTOR_DELETE_EXTRA_QUERY_KEYS);
   }
+}
+
+async function getAuthenticatedBackendToken() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+
+  const token = data.session?.access_token ?? null;
+  if (!token) {
+    throw new Error('You must be signed in to perform this action.');
+  }
+
+  return token;
+}
+
+async function callInvestorBackend<T>(path: string, method: 'POST' | 'DELETE') {
+  const token = await getAuthenticatedBackendToken();
+  const response = await fetch(`${INVESTOR_API_URL}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const raw = await response.text();
+  let data: { message?: string; certificate_url?: string; data?: T } | null = null;
+
+  if (raw) {
+    try {
+      data = JSON.parse(raw) as { message?: string; certificate_url?: string; data?: T };
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.message ?? 'Request failed.');
+  }
+
+  return data?.data ?? (data as unknown as T);
+}
+
+export async function syncInvestorCertificate(investorId: string) {
+  return callInvestorBackend<{ id?: string; certificate_url?: string | null }>(`/investors/${investorId}/sync-certificate`, 'POST');
+}
+
+export async function deleteInvestorPermanently(investorId: string) {
+  return callInvestorBackend<{ message: string }>(`/investors/${investorId}`, 'DELETE');
 }
 
 function buildGroupedInvestmentTypeSummary(userId: string, investors: DashboardInvestorRow[]) {
@@ -539,7 +588,7 @@ export function useCreateInvestor() {
       return data;
     },
     onSuccess: () => {
-      invalidateInvestorRelatedQueries(queryClient);
+      invalidateInvestorRelatedQueries(queryClient, true);
     },
   });
 }
@@ -570,7 +619,7 @@ export function useUpdateInvestor() {
       return data;
     },
     onSuccess: () => {
-      invalidateInvestorRelatedQueries(queryClient);
+      invalidateInvestorRelatedQueries(queryClient, true);
     },
   });
 }
@@ -585,49 +634,7 @@ export function useDeleteInvestor() {
         throw new Error('You must be signed in to delete an investor.');
       }
 
-      const { data: investor, error: fetchError } = await supabase
-        .from('investors')
-        .select('id,name,email,created_by')
-        .eq('id', id)
-        .maybeSingle();
-
-      if (fetchError) throw fetchError;
-      if (!investor) throw new Error('Investor record was not found.');
-
-      const { error: investorCertificateCleanupError } = await supabase
-        .from('investor_certificates')
-        .delete()
-        .eq('investor_id', id);
-
-      if (investorCertificateCleanupError) {
-        throw investorCertificateCleanupError;
-      }
-
-      const { error } = await supabase.from('investors').delete().eq('id', id);
-      if (error) throw error;
-
-      if (role === 'investment_manager' || role === 'general_manager') {
-        const executiveUserIds = await getExecutiveUserIds();
-
-        if (executiveUserIds.length) {
-          const notificationRows = executiveUserIds.map((recipientUserId) => ({
-            user_role: 'ceo',
-            title: 'Investor deleted',
-            detail: `${role === 'investment_manager' ? 'Investment Manager' : 'General Manager'} deleted investor ${investor.name}.`,
-            action_path: '/investors',
-            recipient_user_id: recipientUserId,
-            is_read: false,
-          }));
-
-          const { error: notificationError } = await supabase
-            .from('notifications' as never)
-            .insert(notificationRows as never);
-
-          if (notificationError) {
-            console.error('Failed to notify CEO about investor deletion:', notificationError);
-          }
-        }
-      }
+      await deleteInvestorPermanently(id);
     },
     onSuccess: () => {
       invalidateInvestorRelatedQueries(queryClient, true);

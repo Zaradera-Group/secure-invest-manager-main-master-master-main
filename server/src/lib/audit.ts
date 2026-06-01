@@ -6,7 +6,9 @@ type AuditAction =
   | "certificate_signed_by_general_manager"
   | "certificate_approved_by_ceo"
   | "certificate_sent_to_investor"
-  | "certificate_download_link_generated";
+  | "certificate_download_link_generated"
+  | "certificate_refreshed_after_investor_update"
+  | "investor_deleted_permanently";
 
 export const insertAuditLog = async (input: {
   action: AuditAction;

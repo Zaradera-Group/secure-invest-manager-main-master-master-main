@@ -119,18 +119,49 @@ export class CertificatesService {
     actor: AuthenticatedUser,
     investorEmail: string,
     investorName: string,
+    investorId?: string | null,
   ) {
-    const { data, error } = await adminSupabase
+    const normalizedEmail = investorEmail.trim().toLowerCase();
+    let query = adminSupabase
       .from("certificates")
       .select("*")
-      .eq("investor_email", investorEmail.trim().toLowerCase())
-      .eq("investor_name", investorName)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<CertificateRecord>();
+      .limit(1);
+
+    if (investorId) {
+      query = query.eq("investor_id", investorId);
+    } else {
+      query = query
+        .eq("investor_email", normalizedEmail)
+        .eq("investor_name", investorName);
+    }
+
+    const { data, error } = await query.maybeSingle<CertificateRecord>();
 
     if (error) {
       throw new Error(`Failed to load certificate: ${error.message}`);
+    }
+
+    if (!data && investorId) {
+      const fallbackQuery = adminSupabase
+        .from("certificates")
+        .select("*")
+        .eq("investor_email", normalizedEmail)
+        .eq("investor_name", investorName)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const { data: fallbackData, error: fallbackError } = await fallbackQuery.maybeSingle<CertificateRecord>();
+      if (fallbackError) {
+        throw new Error(`Failed to load certificate: ${fallbackError.message}`);
+      }
+
+      if (!fallbackData) {
+        return null;
+      }
+
+      await this.assertCertificateAccess(fallbackData, actor);
+      return fallbackData;
     }
 
     if (!data) {
@@ -139,6 +170,125 @@ export class CertificatesService {
 
     await this.assertCertificateAccess(data, actor);
     return data;
+  }
+
+  async refreshCertificateForInvestor(actor: AuthenticatedUser, investorId: string) {
+    const investor = await this.getInvestorById(investorId);
+    const latestCertificate = await this.getLatestCertificateForInvestorById(investorId, investor.email, investor.name);
+    const certificatePayload = {
+      investorId: investor.id,
+      investorName: investor.name,
+      investorEmail: investor.email,
+      investorPhone: investor.phone ?? undefined,
+      investorReferenceNumber: investor.reference_number ?? undefined,
+      amount: Number(investor.investment_amount ?? 0),
+      currencyCode: investor.currency_code ?? "NGN",
+      interestRate: Number(investor.percentage ?? 0),
+      investmentType: investor.investment_type ?? undefined,
+      issueDate: latestCertificate?.issue_date ?? undefined,
+      investmentTenure: investor.tenure ? `${investor.tenure} months` : undefined,
+      principalMaturityDate: investor.maturity_date ?? undefined,
+      interestPayment: undefined,
+    } as const;
+
+    if (!latestCertificate) {
+      return this.createCertificate(actor, {
+        investorId: certificatePayload.investorId,
+        investorName: certificatePayload.investorName,
+        investorEmail: certificatePayload.investorEmail,
+        investorPhone: certificatePayload.investorPhone,
+        investorReferenceNumber: certificatePayload.investorReferenceNumber,
+        amount: certificatePayload.amount,
+        currencyCode: certificatePayload.currencyCode,
+        interestRate: certificatePayload.interestRate,
+        investmentType: certificatePayload.investmentType,
+        issueDate: certificatePayload.issueDate,
+        investmentTenure: certificatePayload.investmentTenure,
+        principalMaturityDate: certificatePayload.principalMaturityDate,
+      });
+    }
+
+    if (actor.role === "general_manager" && latestCertificate.created_by !== actor.id) {
+      throw new Error("General Managers can only refresh certificates they created.");
+    }
+
+    if (actor.role === "investment_manager" && latestCertificate.created_by !== actor.id) {
+      throw new Error("Investment Managers can only refresh certificates they created.");
+    }
+
+    const updated = await this.updateCertificate(latestCertificate.id, {
+      investor_id: investor.id,
+      investor_name: investor.name,
+      investor_email: investor.email,
+      investor_phone: investor.phone ?? null,
+      investor_reference_number: investor.reference_number ?? null,
+      amount: Number(investor.investment_amount ?? 0),
+      currency_code: investor.currency_code ?? "NGN",
+      interest_rate: Number(investor.percentage ?? 0),
+      investment_tenure: investor.tenure ? `${investor.tenure} months` : null,
+      principal_maturity_date: investor.maturity_date ?? null,
+      interest_payment: this.buildInterestPaymentFromSnapshot(
+        Number(investor.investment_amount ?? 0),
+        Number(investor.percentage ?? 0),
+        investor.tenure ? `${investor.tenure} months` : undefined,
+        investor.investment_type ?? undefined,
+        latestCertificate.interest_payment ?? null,
+      ),
+    });
+
+    const refreshedCertificate = await this.persistPdf(updated, { investorId: investor.id });
+
+    await insertAuditLog({
+      action: "certificate_refreshed_after_investor_update",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId: refreshedCertificate.id,
+      targetEmail: refreshedCertificate.investor_email,
+      metadata: {
+        investorId: investor.id,
+      },
+    });
+
+    return refreshedCertificate;
+  }
+
+  async permanentlyDeleteInvestor(actor: AuthenticatedUser, investorId: string) {
+    const investor = await this.getInvestorById(investorId);
+    this.assertDeletePermission(actor, investor.created_by);
+
+    const certificates = await this.getCertificatesForInvestor(investor.id, investor.email, investor.name);
+    const certificateIds = certificates.map((certificate) => certificate.id);
+
+    await Promise.all(
+      certificates.map(async (certificate) => {
+        await this.removeCertificateArtifact(certificate);
+      }),
+    );
+
+    if (certificateIds.length) {
+      await adminSupabase.from("certificate_approval_events").delete().in("certificate_id", certificateIds);
+      await adminSupabase.from("notifications").delete().in("certificate_id", certificateIds);
+      await adminSupabase.from("certificates").delete().in("id", certificateIds);
+    }
+
+    await adminSupabase.from("investor_certificates").delete().eq("investor_id", investor.id);
+    await adminSupabase.from("investors").delete().eq("id", investor.id);
+
+    await insertAuditLog({
+      action: "investor_deleted_permanently",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      targetEmail: investor.email,
+      metadata: {
+        investorId: investor.id,
+        investorName: investor.name,
+        certificateCount: certificates.length,
+      },
+    });
+
+    return { message: "Investor deleted permanently." };
   }
 
   async createCertificate(actor: AuthenticatedUser, payload: unknown) {
@@ -169,6 +319,7 @@ export class CertificatesService {
     const { data, error } = await adminSupabase
       .from("certificates")
       .insert({
+        investor_id: input.investorId ?? null,
         investor_name: input.investorName,
         investor_email: input.investorEmail,
         investor_phone: input.investorPhone ?? null,
@@ -753,6 +904,122 @@ export class CertificatesService {
       referenceNumber,
       interestPayment,
     };
+  }
+
+  private async getInvestorById(investorId: string) {
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .select("*")
+      .eq("id", investorId)
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new Error(`Investor not found: ${error?.message ?? investorId}`);
+    }
+
+    return data as {
+      id: string;
+      name: string;
+      email: string;
+      phone: string | null;
+      created_by: string | null;
+      reference_number: number | null;
+      investment_amount: number;
+      currency_code: string | null;
+      percentage: number;
+      tenure: number | null;
+      maturity_date: string | null;
+      investment_type: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
+    };
+  }
+
+  private async getLatestCertificateForInvestorById(investorId: string, investorEmail: string, investorName: string) {
+    const { data: byId } = await adminSupabase
+      .from("certificates")
+      .select("*")
+      .eq("investor_id", investorId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<CertificateRecord>();
+
+    if (byId) {
+      return byId;
+    }
+
+    const { data: byContact } = await adminSupabase
+      .from("certificates")
+      .select("*")
+      .eq("investor_email", investorEmail.trim().toLowerCase())
+      .eq("investor_name", investorName)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<CertificateRecord>();
+
+    return byContact ?? null;
+  }
+
+  private async getCertificatesForInvestor(investorId: string, investorEmail: string, investorName: string) {
+    const normalizedEmail = investorEmail.trim().toLowerCase();
+    const [byIdResult, byContactResult] = await Promise.all([
+      adminSupabase
+        .from("certificates")
+        .select("*")
+        .eq("investor_id", investorId)
+        .order("created_at", { ascending: false }),
+      adminSupabase
+        .from("certificates")
+        .select("*")
+        .eq("investor_email", normalizedEmail)
+        .eq("investor_name", investorName)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    if (byIdResult.error) {
+      throw new Error(`Failed to fetch certificates for investor deletion: ${byIdResult.error.message}`);
+    }
+
+    if (byContactResult.error) {
+      throw new Error(`Failed to fetch certificates for investor deletion: ${byContactResult.error.message}`);
+    }
+
+    const merged = [...(byIdResult.data ?? []), ...(byContactResult.data ?? [])];
+    const uniqueCertificates = new Map<string, CertificateRecord>();
+    merged.forEach((certificate) => {
+      uniqueCertificates.set(certificate.id, certificate as CertificateRecord);
+    });
+
+    return [...uniqueCertificates.values()];
+  }
+
+  private async removeCertificateArtifact(certificate: CertificateRecord) {
+    const storagePath = certificate.certificate_url?.trim();
+    if (!storagePath) {
+      return;
+    }
+
+    const normalizedPath = this.extractStoragePath(storagePath) ?? storagePath;
+    const { error } = await adminSupabase.storage
+      .from(env.CERTIFICATE_STORAGE_BUCKET)
+      .remove([normalizedPath]);
+
+    if (error) {
+      console.warn("Failed to remove certificate artifact", {
+        certificateId: certificate.id,
+        message: error.message,
+      });
+    }
+  }
+
+  private assertDeletePermission(actor: AuthenticatedUser, createdBy: string | null) {
+    if (actor.role === "admin" || actor.role === "super_admin") {
+      return;
+    }
+
+    if ((actor.role === "investment_manager" || actor.role === "general_manager") && createdBy === actor.id) {
+      return;
+    }
+
+    throw new Error("Forbidden for current role");
   }
 
   private buildInterestPaymentFromSnapshot(

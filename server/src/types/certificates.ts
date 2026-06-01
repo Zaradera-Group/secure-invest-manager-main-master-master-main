@@ -9,6 +9,7 @@ export type CertificateStatus =
 
 export interface CertificateRecord {
   id: string;
+  investor_id?: string | null;
   investor_name: string;
   investor_email: string;
   investor_phone?: string | null;

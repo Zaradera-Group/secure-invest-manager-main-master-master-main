@@ -4,7 +4,6 @@ import { sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
-import { sendPlainSms } from "../lib/sms.js";
 import {
   createOtpExpiryDate,
   generatePublicIntakeOtpCode,
@@ -172,7 +171,6 @@ export async function sendPublicIntakeOtp(payload: unknown) {
   const input = schema.parse(payload);
   const codeTarget = normalizePhoneNumber(input.phone);
   const emailTarget = input.email?.trim().toLowerCase() ?? null;
-  assertOtpConfigured();
 
   const otpCode = generatePublicIntakeOtpCode();
   const codeHash = hashPublicIntakeOtpCode(otpCode);
@@ -200,16 +198,6 @@ export async function sendPublicIntakeOtp(payload: unknown) {
   const deliveryTasks: Promise<unknown>[] = [];
   const channels: string[] = [];
 
-  if (canSendPublicIntakeSms()) {
-    deliveryTasks.push(
-      sendPlainSms(
-        codeTarget,
-        `Your Zaradera public intake verification code is ${otpCode}. It expires in 10 minutes.`,
-      ),
-    );
-    channels.push("sms");
-  }
-
   if (emailTarget && canSendPublicIntakeEmail()) {
     deliveryTasks.push(
       sendPlainEmail(
@@ -232,11 +220,9 @@ export async function sendPublicIntakeOtp(payload: unknown) {
   }
 
   return {
-    message: channels.includes("email") && channels.includes("sms")
-      ? "Verification code sent to phone and email"
-      : channels.includes("email")
-        ? "Verification code sent to email"
-        : "Verification code sent to phone",
+    message: channels.includes("email")
+      ? "Verification code sent to email"
+      : "Verification code sent",
   };
 }
 
@@ -248,7 +234,7 @@ export async function verifyPublicIntakeOtp(payload: unknown) {
 
   const input = schema.parse(payload);
   const codeTarget = normalizePhoneNumber(input.phone);
-  assertOtpConfigured();
+  assertConsentConfigured();
   const normalizedCode = normalizeOtp(input.code);
 
   const { data: record, error } = await adminSupabase
@@ -386,19 +372,10 @@ function normalizePhoneNumber(phone: string) {
   return phone.trim().replace(/\s+/g, "");
 }
 
-function assertOtpConfigured() {
+function assertConsentConfigured() {
   if (!env.PUBLIC_INTAKE_CONSENT_TOKEN_SECRET) {
-    throw new Error("Public intake OTP is not configured");
+    throw new Error("Public intake consent is not configured");
   }
-}
-
-function canSendPublicIntakeSms() {
-  return Boolean(
-    env.SMS_DELIVERY_ENABLED
-    && env.TWILIO_ACCOUNT_SID
-    && env.TWILIO_AUTH_TOKEN
-    && (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER),
-  );
 }
 
 function canSendPublicIntakeEmail() {

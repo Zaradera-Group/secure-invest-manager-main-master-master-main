@@ -17,6 +17,7 @@ import { daysUntilMaturity } from '@/types/investment';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDefaultDashboardPath } from '@/lib/authRoutes';
+import { ConfirmInvestorDeleteDialog } from '@/components/investors/ConfirmInvestorDeleteDialog';
 
 export default function InvestorsList() {
   const [page, setPage] = useState(0);
@@ -27,6 +28,7 @@ export default function InvestorsList() {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [isExporting, setIsExporting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
   const { role } = useAuth();
@@ -171,15 +173,13 @@ export default function InvestorsList() {
   };
 
   const handleDeleteInvestor = async (investorId: string, investorName: string) => {
-    const confirmed = globalThis.confirm(`Delete investor "${investorName}"? This action cannot be undone.`);
-    if (!confirmed) return;
-
     try {
       await deleteInvestor.mutateAsync(investorId);
       toast({
         title: 'Investor deleted',
         description: `${investorName} was removed successfully.`,
       });
+      setDeleteTarget(null);
       navigate(getDefaultDashboardPath(role), { replace: true });
     } catch (error) {
       toast({
@@ -334,7 +334,7 @@ export default function InvestorsList() {
                           size="sm"
                           className="text-destructive hover:text-destructive"
                           disabled={deleteInvestor.isPending}
-                          onClick={() => handleDeleteInvestor(investor.id, investor.name)}
+                          onClick={() => setDeleteTarget({ id: investor.id, name: investor.name })}
                         >
                           <Trash2 className="w-4 h-4 mr-2" />
                           Delete
@@ -368,6 +368,21 @@ export default function InvestorsList() {
           </div>
         </div>
       </Card>
+
+      <ConfirmInvestorDeleteDialog
+        open={!!deleteTarget}
+        investorName={deleteTarget?.name ?? 'this investor'}
+        isDeleting={deleteInvestor.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          void handleDeleteInvestor(deleteTarget.id, deleteTarget.name);
+        }}
+      />
     </motion.div>
   );
 }

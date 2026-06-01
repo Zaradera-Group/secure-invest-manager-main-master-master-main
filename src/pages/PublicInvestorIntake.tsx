@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CheckCircle2, Link as LinkIcon, Send } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -29,6 +29,7 @@ const NEXT_OF_KIN_RELATIONSHIPS = [
   'Friend',
   'Other',
 ] as const;
+const PUBLIC_INTAKE_DRAFT_KEY = 'public-intake:draft';
 
 export default function PublicInvestorIntake() {
   const { toast } = useToast();
@@ -64,6 +65,22 @@ export default function PublicInvestorIntake() {
     currencyCode: 'NGN',
     website: '',
   });
+
+  useEffect(() => {
+    const draft = globalThis.sessionStorage?.getItem(PUBLIC_INTAKE_DRAFT_KEY);
+    if (!draft) return;
+
+    try {
+      const parsed = JSON.parse(draft) as Partial<typeof form>;
+      setForm((current) => ({ ...current, ...parsed }));
+    } catch {
+      globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_DRAFT_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    globalThis.sessionStorage?.setItem(PUBLIC_INTAKE_DRAFT_KEY, JSON.stringify(form));
+  }, [form]);
 
   const handleChange = (field: string, value: string) => {
     if ((field === 'phone' || field === 'email') && value !== form[field]) {
@@ -103,10 +120,10 @@ export default function PublicInvestorIntake() {
         throw new Error(data?.message ?? 'Unable to send the verification code.');
       }
 
-      setOtpStatus('Verification code sent to the phone number entered.');
+      setOtpStatus('Verification code sent to the email address entered.');
       toast({
         title: 'Code sent',
-        description: 'The investor will receive the same one-time code by phone and email.',
+        description: 'The investor will receive the one-time code by email.',
       });
     } catch (error) {
       setOtpStatus(error instanceof Error ? error.message : 'Could not send the verification code.');
@@ -216,7 +233,7 @@ export default function PublicInvestorIntake() {
       }
 
       setIsSubmitted(true);
-      setSubmissionLink('/landing');
+      setSubmissionLink('/investor-intake');
       toast({
         title: 'Submission received',
         description: 'The details were queued for manual review.',
@@ -250,7 +267,7 @@ export default function PublicInvestorIntake() {
               <Button asChild>
                 <Link to={submissionLink}>
                   <LinkIcon className="w-4 h-4 mr-2" />
-                  Return to home
+                  Back to public intake
                 </Link>
               </Button>
             )}
@@ -384,12 +401,12 @@ export default function PublicInvestorIntake() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">OTP Consent</p>
                   <p className="mt-1 text-sm text-foreground/80">
-                    Request a one-time code to the phone number entered above. Enter the code below to confirm consent.
+                    Request a one-time code to the email address entered above. Enter the code below to confirm consent.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" onClick={handleSendOtp} disabled={isSendingOtp || !form.phone.trim()}>
-                    {isSendingOtp ? 'Sending OTP...' : 'Send OTP to Phone & Email'}
+                    {isSendingOtp ? 'Sending OTP...' : 'Send OTP to Email'}
                   </Button>
                   <Button
                     type="button"
@@ -416,7 +433,7 @@ export default function PublicInvestorIntake() {
                 </InputOTP>
                 {otpStatus && <p className={`text-xs ${isPhoneVerified ? 'text-success' : 'text-muted-foreground'}`}>{otpStatus}</p>}
                 <p className="text-xs text-muted-foreground">
-                  By verifying the OTP, the investor confirms consent and acknowledges the declaration above. The same code is delivered to both phone and email.
+                  By verifying the OTP, the investor confirms consent and acknowledges the declaration above. The code is delivered by email.
                 </p>
               </div>
             </CardContent>
