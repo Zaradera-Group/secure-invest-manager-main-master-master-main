@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CheckCircle2, Link as LinkIcon, Send } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -47,6 +46,34 @@ const NEXT_OF_KIN_RELATIONSHIPS = [
   'Other',
 ] as const;
 const PUBLIC_INTAKE_DRAFT_KEY = 'public-intake:draft';
+const PUBLIC_INTAKE_SUBMISSION_KEY = 'public-intake:submission';
+const PUBLIC_INTAKE_SUCCESS_DURATION_MS = 30_000;
+
+const INITIAL_FORM = {
+  name: '',
+  email: '',
+  phone: '',
+  investmentAmount: '',
+  startDate: '',
+  tenure: '',
+  investmentType: 'Monthly',
+  clientAccountNumber: '',
+  clientBank: '',
+  dateOfBirth: '',
+  gender: '',
+  occupation: '',
+  sourceOfFunds: '',
+  address: '',
+  nextOfKinName: '',
+  nextOfKinPhone: '',
+  nextOfKinRelationship: '',
+  currencyCode: 'NGN',
+  website: '',
+};
+
+type SubmissionSnapshot = {
+  submittedAt: number;
+};
 
 export default function PublicInvestorIntake() {
   const { toast } = useToast();
@@ -62,34 +89,40 @@ export default function PublicInvestorIntake() {
   const [consentToken, setConsentToken] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileStatus, setTurnstileStatus] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    investmentAmount: '',
-    startDate: '',
-    tenure: '',
-    investmentType: 'Monthly',
-    clientAccountNumber: '',
-    clientBank: '',
-    dateOfBirth: '',
-    gender: '',
-    occupation: '',
-    sourceOfFunds: '',
-    address: '',
-    nextOfKinName: '',
-    nextOfKinPhone: '',
-    nextOfKinRelationship: '',
-    currencyCode: 'NGN',
-    website: '',
-  });
+  const [form, setForm] = useState(INITIAL_FORM);
 
   useEffect(() => {
+    const submissionRaw = globalThis.sessionStorage?.getItem(PUBLIC_INTAKE_SUBMISSION_KEY);
+
+    if (submissionRaw) {
+      try {
+        const parsed = JSON.parse(submissionRaw) as SubmissionSnapshot;
+        const submittedAt = Number(parsed.submittedAt);
+        if (Number.isFinite(submittedAt)) {
+          setIsSubmitted(true);
+          setSubmissionLink('/investor-intake');
+          const elapsed = Date.now() - submittedAt;
+          if (elapsed >= PUBLIC_INTAKE_SUCCESS_DURATION_MS) {
+            setSubmissionTimedOut(true);
+          } else {
+            const timeoutId = window.setTimeout(() => {
+              setSubmissionTimedOut(true);
+            }, PUBLIC_INTAKE_SUCCESS_DURATION_MS - elapsed);
+
+            return () => window.clearTimeout(timeoutId);
+          }
+          return;
+        }
+      } catch {
+        globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_SUBMISSION_KEY);
+      }
+    }
+
     const draft = globalThis.sessionStorage?.getItem(PUBLIC_INTAKE_DRAFT_KEY);
     if (!draft) return;
 
     try {
-      const parsed = JSON.parse(draft) as Partial<typeof form>;
+      const parsed = JSON.parse(draft) as Partial<typeof INITIAL_FORM>;
       setForm((current) => ({ ...current, ...parsed }));
     } catch {
       globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_DRAFT_KEY);
@@ -97,8 +130,13 @@ export default function PublicInvestorIntake() {
   }, []);
 
   useEffect(() => {
+    if (isSubmitted) {
+      globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_DRAFT_KEY);
+      return;
+    }
+
     globalThis.sessionStorage?.setItem(PUBLIC_INTAKE_DRAFT_KEY, JSON.stringify(form));
-  }, [form]);
+  }, [form, isSubmitted]);
 
   useEffect(() => {
     if (!isSubmitted) {
@@ -265,6 +303,11 @@ export default function PublicInvestorIntake() {
       setIsSubmitted(true);
       setSubmissionTimedOut(false);
       setSubmissionLink('/investor-intake');
+      globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_DRAFT_KEY);
+      globalThis.sessionStorage?.setItem(
+        PUBLIC_INTAKE_SUBMISSION_KEY,
+        JSON.stringify({ submittedAt: Date.now() } satisfies SubmissionSnapshot),
+      );
       toast({
         title: 'Submission received',
         description: 'The details were queued for manual review.',
@@ -284,6 +327,22 @@ export default function PublicInvestorIntake() {
     const description = submissionTimedOut
       ? 'This success screen has timed out after 30 seconds. You can return to the form and submit again if needed.'
       : 'Your details were queued for manual review. No investor record was created automatically.';
+    const handleReturnToForm = () => {
+      globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_SUBMISSION_KEY);
+      globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_DRAFT_KEY);
+      setIsSubmitted(false);
+      setSubmissionTimedOut(false);
+      setSubmissionLink(null);
+      setOtpCode('');
+      setOtpStatus(null);
+      setIsSendingOtp(false);
+      setIsVerifyingOtp(false);
+      setIsPhoneVerified(false);
+      setConsentToken(null);
+      setTurnstileToken(null);
+      setTurnstileStatus(null);
+      setForm(INITIAL_FORM);
+    };
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background flex items-center justify-center p-6">
@@ -297,11 +356,9 @@ export default function PublicInvestorIntake() {
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">{description}</p>
             {submissionLink && (
-              <Button asChild>
-                <Link to={submissionLink}>
-                  <LinkIcon className="w-4 h-4 mr-2" />
-                  Back to public intake
-                </Link>
+              <Button type="button" onClick={handleReturnToForm}>
+                <LinkIcon className="w-4 h-4 mr-2" />
+                {submissionTimedOut ? 'Start a new submission' : 'Back to public intake'}
               </Button>
             )}
           </CardContent>
