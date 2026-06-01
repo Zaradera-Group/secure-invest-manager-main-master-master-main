@@ -12,7 +12,18 @@ import { Textarea } from '@/components/ui/textarea';
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { useToast } from '@/hooks/use-toast';
 
-const CERTIFICATE_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+function getCertificateApiUrl() {
+  const configuredUrl = import.meta.env.VITE_CERTIFICATE_API_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, '');
+  }
+
+  if (import.meta.env.DEV) {
+    return 'http://localhost:4000';
+  }
+
+  throw new Error('Public intake API URL is not configured. Set VITE_CERTIFICATE_API_URL in Netlify to your Render backend URL.');
+}
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 const INVESTMENT_TYPES = ['Upfront', 'Monthly', 'Quarterly', 'At Maturity'] as const;
 const CURRENCIES = ['NGN', 'USD', 'GBP', 'EUR'] as const;
@@ -103,7 +114,7 @@ export default function PublicInvestorIntake() {
     setOtpStatus(null);
 
     try {
-      const response = await fetch(`${CERTIFICATE_API_URL}/public/investor-intake/otp/send`, {
+      const response = await fetch(`${getCertificateApiUrl()}/public/investor-intake/otp/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -130,7 +141,6 @@ export default function PublicInvestorIntake() {
       toast({
         title: 'OTP failed',
         description: error instanceof Error ? error.message : 'Could not send the verification code.',
-        variant: 'destructive',
       });
     } finally {
       setIsSendingOtp(false);
@@ -152,7 +162,7 @@ export default function PublicInvestorIntake() {
     setOtpStatus(null);
 
     try {
-      const response = await fetch(`${CERTIFICATE_API_URL}/public/investor-intake/otp/verify`, {
+      const response = await fetch(`${getCertificateApiUrl()}/public/investor-intake/otp/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -183,7 +193,6 @@ export default function PublicInvestorIntake() {
       toast({
         title: 'Verification failed',
         description: error instanceof Error ? error.message : 'Could not verify the code.',
-        variant: 'destructive',
       });
     } finally {
       setIsVerifyingOtp(false);
@@ -203,7 +212,7 @@ export default function PublicInvestorIntake() {
         throw new Error('Please complete the human verification challenge before submitting.');
       }
 
-      const response = await fetch(`${CERTIFICATE_API_URL}/public/investor-intake`, {
+      const response = await fetch(`${getCertificateApiUrl()}/public/investor-intake`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -242,7 +251,6 @@ export default function PublicInvestorIntake() {
       toast({
         title: 'Submission failed',
         description: error instanceof Error ? error.message : 'Could not submit the intake form.',
-        variant: 'destructive',
       });
     } finally {
       setIsSubmitting(false);
