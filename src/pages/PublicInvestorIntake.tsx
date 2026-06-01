@@ -13,9 +13,15 @@ import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { useToast } from '@/hooks/use-toast';
 
 function getCertificateApiUrl() {
-  const configuredUrl = import.meta.env.VITE_CERTIFICATE_API_URL?.trim();
+  const configuredUrl = import.meta.env.VITE_CERTIFICATE_API_URL?.trim().replace(/^['"]|['"]$/g, '');
   if (configuredUrl) {
-    return configuredUrl.replace(/\/$/, '');
+    const normalized = configuredUrl.replace(/\/$/, '');
+
+    if (!import.meta.env.DEV && normalized.startsWith('http://')) {
+      throw new Error('Public intake API must use HTTPS in production. Set VITE_CERTIFICATE_API_URL to your Render https URL, not http.');
+    }
+
+    return normalized;
   }
 
   if (import.meta.env.DEV) {
@@ -46,6 +52,7 @@ export default function PublicInvestorIntake() {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submissionTimedOut, setSubmissionTimedOut] = useState(false);
   const [submissionLink, setSubmissionLink] = useState<string | null>(null);
   const [otpCode, setOtpCode] = useState('');
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
@@ -92,6 +99,20 @@ export default function PublicInvestorIntake() {
   useEffect(() => {
     globalThis.sessionStorage?.setItem(PUBLIC_INTAKE_DRAFT_KEY, JSON.stringify(form));
   }, [form]);
+
+  useEffect(() => {
+    if (!isSubmitted) {
+      setSubmissionTimedOut(false);
+      return;
+    }
+
+    setSubmissionTimedOut(false);
+    const timeoutId = window.setTimeout(() => {
+      setSubmissionTimedOut(true);
+    }, 30_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isSubmitted]);
 
   const handleChange = (field: string, value: string) => {
     if ((field === 'phone' || field === 'email') && value !== form[field]) {
@@ -242,6 +263,7 @@ export default function PublicInvestorIntake() {
       }
 
       setIsSubmitted(true);
+      setSubmissionTimedOut(false);
       setSubmissionLink('/investor-intake');
       toast({
         title: 'Submission received',
@@ -258,19 +280,22 @@ export default function PublicInvestorIntake() {
   };
 
   if (isSubmitted) {
+    const title = submissionTimedOut ? 'Submission timed out' : 'Submission successful';
+    const description = submissionTimedOut
+      ? 'This success screen has timed out after 30 seconds. You can return to the form and submit again if needed.'
+      : 'Your details were queued for manual review. No investor record was created automatically.';
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background flex items-center justify-center p-6">
         <Card className="w-full max-w-2xl glass-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl">
               <CheckCircle2 className="w-5 h-5 text-success" />
-              Submission successful
+              {title}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Your details were queued for manual review. No investor record was created automatically.
-            </p>
+            <p className="text-sm text-muted-foreground">{description}</p>
             {submissionLink && (
               <Button asChild>
                 <Link to={submissionLink}>

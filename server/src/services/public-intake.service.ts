@@ -121,35 +121,58 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
   }
 
   const requestId = requestRecord.id as string;
-  const recipients = await resolveNotificationRecipients({
+  const notificationPayload = buildPublicIntakeNotificationPayload({
+    investor: input,
+    requestId,
+    maturityDate,
+  });
+  const internalRecipients = await resolveInternalRecipients({
+    assigneeUserId,
     assigneeEmail,
-    submitterEmail: input.email.trim().toLowerCase(),
   });
 
-  await adminSupabase.from("notifications").insert({
-    user_role: "manager",
-    recipient_user_id: assigneeUserId,
-    recipient_email: assigneeEmail ?? null,
-    title: "New public investor intake",
-    detail: `${input.name.trim()} submitted an external investor intake form for review.`,
-    message: `${input.name.trim()} submitted an external investor intake form for review.`,
-    action_path: "/public-intake-inbox",
-    is_read: false,
-  });
+  const notificationResults = await Promise.allSettled(
+    internalRecipients.map(async (recipient) => {
+      await adminSupabase.from("notifications").insert({
+        user_role: recipient.role,
+        recipient_user_id: recipient.userId ?? null,
+        recipient_email: recipient.email,
+        title: "New public investor intake",
+        detail: notificationPayload,
+        message: notificationPayload,
+        action_path: "/public-intake-inbox",
+        is_read: false,
+      });
+    }),
+  );
 
-  const deliveryResults = await Promise.allSettled(
-    recipients.map((recipient) =>
+  const failedNotifications = notificationResults.filter((result) => result.status === "rejected");
+  if (failedNotifications.length > 0) {
+    console.warn("[public-intake] One or more dashboard notifications failed:", failedNotifications.length);
+  }
+
+  const deliveryResults = await Promise.allSettled([
+    ...internalRecipients.map((recipient) =>
       sendPlainEmail(
-        recipient,
+        recipient.email,
         `New public investor intake: ${input.name.trim()}`,
-        buildPublicIntakeEmailHtml({
+        buildPublicIntakeInternalEmailHtml({
           investor: input,
           requestId,
           maturityDate,
         }),
       ),
     ),
-  );
+    sendPlainEmail(
+      input.email.trim().toLowerCase(),
+      "Your public intake submission was received",
+      buildPublicIntakeInvestorEmailHtml({
+        investor: input,
+        requestId,
+        maturityDate,
+      }),
+    ),
+  ]);
 
   const failedDeliveries = deliveryResults.filter((result) => result.status === "rejected");
   if (failedDeliveries.length > 0) {
@@ -312,24 +335,43 @@ async function resolveAssigneeEmail(assigneeUserId: string, fallbackEmail?: stri
   return data.users.find((user) => user.id === assigneeUserId)?.email?.trim() ?? null;
 }
 
-async function resolveNotificationRecipients(args: {
-  assigneeEmail: string | null;
-  submitterEmail: string;
-}) {
-  const managerEmails = await resolveEmailsByRoles(["general_manager", "super_admin"]);
-  const recipients = new Set<string>();
+type InternalPublicIntakeRecipient = {
+  role: "manager" | "general_manager" | "ceo";
+  userId: string | null;
+  email: string;
+};
 
-  if (args.assigneeEmail) {
-    recipients.add(args.assigneeEmail.trim().toLowerCase());
+async function resolveInternalRecipients(args: {
+  assigneeUserId: string;
+  assigneeEmail: string | null;
+}) {
+  const recipients = new Map<string, InternalPublicIntakeRecipient>();
+
+  const assigneeEmail = args.assigneeEmail?.trim().toLowerCase() ?? null;
+  if (assigneeEmail) {
+    recipients.set(assigneeEmail, {
+      role: "manager",
+      userId: args.assigneeUserId,
+      email: assigneeEmail,
+    });
   }
+
+  const managerEmails = await resolveEmailsByRoles(["general_manager", "super_admin"]);
+  const userLookup = await resolveUserLookup();
 
   for (const email of managerEmails) {
-    recipients.add(email.trim().toLowerCase());
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = userLookup.byEmail.get(normalizedEmail);
+    const role = user?.role === "super_admin" ? "ceo" : "general_manager";
+
+    recipients.set(`${role}:${normalizedEmail}`, {
+      role,
+      userId: user?.id ?? null,
+      email: normalizedEmail,
+    });
   }
 
-  recipients.add(args.submitterEmail.trim().toLowerCase());
-
-  return Array.from(recipients).filter(Boolean);
+  return Array.from(recipients.values());
 }
 
 async function resolveEmailsByRoles(roles: Array<"general_manager" | "super_admin">) {
@@ -360,6 +402,45 @@ async function resolveEmailsByRoles(roles: Array<"general_manager" | "super_admi
     .filter((user) => targetUserIds.has(user.id))
     .map((user) => user.email?.trim())
     .filter((email): email is string => !!email);
+}
+
+async function resolveUserLookup() {
+  const { data, error } = await adminSupabase.auth.admin.listUsers();
+  if (error) {
+    throw error;
+  }
+
+  const { data: userRoles, error: rolesError } = await adminSupabase
+    .from("user_roles")
+    .select("user_id, role");
+
+  if (rolesError) {
+    throw rolesError;
+  }
+
+  const roleByUserId = new Map(
+    (userRoles ?? []).map((row) => [row.user_id as string, row.role as string]),
+  );
+
+  return {
+    byEmail: new Map(
+      data.users
+        .map((user) => {
+          const email = user.email?.trim().toLowerCase();
+          return email
+            ? [
+                email,
+                {
+                  id: user.id,
+                  email,
+                  role: roleByUserId.get(user.id) ?? null,
+                },
+              ]
+            : null;
+        })
+        .filter((entry): entry is [string, { id: string; email: string; role: string | null }] => entry !== null),
+    ),
+  };
 }
 
 function calculateMaturityDate(startDate: string, tenure: number) {
@@ -393,13 +474,39 @@ function buildOtpEmailHtml(code: string) {
   `;
 }
 
-function buildPublicIntakeEmailHtml(args: {
+function buildPublicIntakeNotificationPayload(args: {
+  investor: PublicInvestorIntakeInput;
+  requestId: string;
+  maturityDate: string;
+}) {
+  const relationship = args.investor.nextOfKinRelationship?.trim() || "Not provided";
+  const address = args.investor.address?.trim() || "Not provided";
+  const gender = args.investor.gender ?? "Not provided";
+
+  return [
+    `Request ID: ${args.requestId}`,
+    `Investor: ${args.investor.name.trim()}`,
+    `Email: ${args.investor.email.trim().toLowerCase()}`,
+    `Phone: ${args.investor.phone.trim()}`,
+    `Address: ${address}`,
+    `Gender: ${gender}`,
+    `Next of Kin: ${args.investor.nextOfKinName?.trim() || "Not provided"} (${relationship})`,
+    `Amount: ${args.investor.investmentAmount.toLocaleString()}`,
+    `Type: ${args.investor.investmentType}`,
+    `Maturity Date: ${args.maturityDate}`,
+  ].join(" | ");
+}
+
+function buildPublicIntakeInternalEmailHtml(args: {
   investor: PublicInvestorIntakeInput;
   requestId: string;
   maturityDate: string;
 }) {
   const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
   const inboxLink = `${appUrl}/public-intake-inbox`;
+  const relationship = args.investor.nextOfKinRelationship?.trim() || "Not provided";
+  const address = args.investor.address?.trim() || "Not provided";
+  const gender = args.investor.gender ?? "Not provided";
 
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
@@ -408,11 +515,34 @@ function buildPublicIntakeEmailHtml(args: {
       <p><strong>Name:</strong> ${escapeHtml(args.investor.name)}</p>
       <p><strong>Email:</strong> ${escapeHtml(args.investor.email)}</p>
       <p><strong>Phone:</strong> ${escapeHtml(args.investor.phone)}</p>
+      <p><strong>Address:</strong> ${escapeHtml(address)}</p>
+      <p><strong>Gender:</strong> ${escapeHtml(gender)}</p>
       <p><strong>Amount:</strong> ${args.investor.investmentAmount.toLocaleString()}</p>
       <p><strong>Type:</strong> ${escapeHtml(args.investor.investmentType)}</p>
+      <p><strong>Next of Kin:</strong> ${escapeHtml(args.investor.nextOfKinName?.trim() || "Not provided")}</p>
+      <p><strong>Next of Kin Relationship:</strong> ${escapeHtml(relationship)}</p>
+      <p><strong>Next of Kin Phone:</strong> ${escapeHtml(args.investor.nextOfKinPhone?.trim() || "Not provided")}</p>
       <p><strong>Maturity Date:</strong> ${escapeHtml(args.maturityDate)}</p>
       <p><strong>Action:</strong> Review, copy, and convert this request into an investor record manually.</p>
       <p><strong>Open Inbox:</strong> <a href="${inboxLink}">${inboxLink}</a></p>
+    </div>
+  `;
+}
+
+function buildPublicIntakeInvestorEmailHtml(args: {
+  investor: PublicInvestorIntakeInput;
+  requestId: string;
+  maturityDate: string;
+}) {
+  return `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+      <h2 style="margin: 0 0 12px;">Public Intake Received</h2>
+      <p>Thank you, ${escapeHtml(args.investor.name.trim())}. Your submission has been received and queued for manual review.</p>
+      <p><strong>Request ID:</strong> ${escapeHtml(args.requestId)}</p>
+      <p><strong>Amount:</strong> ${args.investor.investmentAmount.toLocaleString()}</p>
+      <p><strong>Type:</strong> ${escapeHtml(args.investor.investmentType)}</p>
+      <p><strong>Maturity Date:</strong> ${escapeHtml(args.maturityDate)}</p>
+      <p>Your details will be reviewed internally before any investor record is created.</p>
     </div>
   `;
 }

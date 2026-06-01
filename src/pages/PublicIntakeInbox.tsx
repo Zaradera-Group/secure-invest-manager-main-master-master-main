@@ -28,6 +28,8 @@ type PublicIntakeRequest = {
   client_account_number: string;
   client_bank: string;
   brought_by?: string | null;
+  gender?: string | null;
+  address?: string | null;
   currency_code?: string | null;
   occupation?: string | null;
   source_of_funds?: string | null;
@@ -204,12 +206,15 @@ export default function PublicIntakeInbox() {
                     <Info label="Type" value={request.investment_type} />
                     <Info label="Bank" value={request.client_bank} />
                     <Info label="Account" value={request.client_account_number} />
+                    <Info label="Gender" value={request.gender ?? 'Not provided'} />
+                    <Info label="Address" value={request.address ?? 'Not provided'} />
                     <Info label="Start Date" value={formatDate(request.start_date)} />
                     <Info label="Maturity" value={formatDate(request.maturity_date)} />
                   </div>
                   <div className="text-sm text-muted-foreground space-y-1">
                     <p><span className="text-foreground font-medium">Reference:</span> {request.category_reference_name ?? 'None'} {request.category_reference_email ? `(${request.category_reference_email})` : ''}</p>
                     <p><span className="text-foreground font-medium">Next of Kin:</span> {request.next_of_kin_name ?? 'None'} {request.next_of_kin_phone ? `(${request.next_of_kin_phone})` : ''}</p>
+                    <p><span className="text-foreground font-medium">Next of Kin Relationship:</span> {request.next_of_kin_relationship ?? 'None'}</p>
                     <p><span className="text-foreground font-medium">Assigned Email:</span> {request.assigned_email ?? 'Not set'}</p>
                     <p><span className="text-foreground font-medium">Submitted:</span> {formatDate(request.created_at)}</p>
                     {request.reviewed_at && <p><span className="text-foreground font-medium">Reviewed:</span> {formatDate(request.reviewed_at)}</p>}
