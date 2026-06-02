@@ -43,6 +43,7 @@ const publicInvestorIntakeSchema = z.object({
   turnstileToken: z.string().min(1),
   website: z.string().optional().nullable(),
   percentage: z.coerce.number().positive().optional().nullable(),
+  verifiedOtpCode: z.string().optional().nullable(),
   consentToken: z.string().min(1),
 });
 
@@ -229,7 +230,7 @@ export async function sendPublicIntakeOtp(payload: unknown) {
     deliveryTasks.push(
       sendPlainEmail(
         emailTarget,
-        "Your Zaradera public intake verification code",
+        "Your Zaraderavest verification code",
         buildOtpEmailHtml(otpCode),
       ),
     );
@@ -470,7 +471,7 @@ function canSendPublicIntakeEmail() {
 function buildOtpEmailHtml(code: string) {
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
-      <h2 style="margin: 0 0 12px;">Verify Your Public Intake</h2>
+      <h2 style="margin: 0 0 12px;">Verify Your Zaraderavest Form</h2>
       <p>Your verification code is:</p>
       <div style="font-size: 28px; letter-spacing: 0.2em; font-weight: 700; margin: 16px 0;">${code}</div>
       <p>This code expires in 10 minutes and can only be used once.</p>
@@ -552,6 +553,7 @@ function buildPublicIntakeInvestorEmailHtml(args: {
   const accountNumber = escapeHtml(args.investor.clientAccountNumber.trim());
   const address = escapeHtml(args.investor.address?.trim() || "Not provided");
   const gender = escapeHtml(args.investor.gender ?? "Not provided");
+  const verifiedOtpCode = escapeHtml(args.investor.verifiedOtpCode?.trim() || "Not provided");
 
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
@@ -575,7 +577,7 @@ function buildPublicIntakeInvestorEmailHtml(args: {
         <p style="margin: 0 0 12px;">
           I/We hereby declare that the information provided is true and complete. I/We understand and accept the terms and agree to comply with the partnership.
         </p>
-        <p style="margin: 0 0 8px;"><strong>Investor's OTP number:</strong> Verified during submission</p>
+        <p style="margin: 0 0 8px;"><strong>Investor's OTP number:</strong> ${verifiedOtpCode}</p>
         <p style="margin: 0;"><strong>Date:</strong> ${submittedDate}</p>
       </div>
     </div>

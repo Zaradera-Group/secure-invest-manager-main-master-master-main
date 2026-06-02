@@ -289,6 +289,7 @@ export default function PublicInvestorIntake() {
           nextOfKinPhone: form.nextOfKinPhone || null,
           nextOfKinRelationship: form.nextOfKinRelationship || null,
           website: form.website || null,
+          verifiedOtpCode: otpCode,
           consentToken,
           turnstileToken,
         }),
