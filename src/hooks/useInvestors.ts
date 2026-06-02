@@ -157,13 +157,19 @@ async function getAuthenticatedBackendToken() {
   return token;
 }
 
-async function callInvestorBackend<T>(path: string, method: 'POST' | 'DELETE') {
+async function callInvestorBackend<T>(
+  path: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+) {
   const token = await getAuthenticatedBackendToken();
   const response = await fetch(`${INVESTOR_API_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
+    body: body ? JSON.stringify(body) : undefined,
   });
 
   const raw = await response.text();
@@ -598,25 +604,7 @@ export function useUpdateInvestor() {
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<InvestorRow> & { id: string }) => {
-      const { data, error } = await supabase
-        .from('investors')
-        .update(updates)
-        .eq('id', id)
-        .select()
-        .maybeSingle();
-      if (error) {
-        if (error.code === '42501' || error.code === 'PGRST116') {
-          throw new Error('Your account does not yet have permission to update investor records. Please apply the latest database migration and sign in again.');
-        }
-
-        throw error;
-      }
-
-      if (!data) {
-        throw new Error('No investor record was updated. Please confirm the investor still exists and that your role has update access.');
-      }
-
-      return data;
+      return callInvestorBackend<InvestorRow>(`/investors/${id}`, 'PATCH', updates);
     },
     onSuccess: () => {
       invalidateInvestorRelatedQueries(queryClient, true);

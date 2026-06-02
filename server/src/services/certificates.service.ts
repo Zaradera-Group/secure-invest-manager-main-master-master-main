@@ -39,6 +39,42 @@ const createCertificateSchema = z.object({
   interestPayment: z.string().optional(),
 });
 
+const updateInvestorSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  investor_category: z.string().optional(),
+  category_reference_name: z.string().nullable().optional(),
+  category_reference_email: z.string().email().nullable().optional(),
+  category_notes: z.string().nullable().optional(),
+  date_of_birth: z.string().nullable().optional(),
+  gender: z.string().nullable().optional(),
+  nin: z.string().nullable().optional(),
+  bvn: z.string().nullable().optional(),
+  occupation: z.string().nullable().optional(),
+  source_of_funds: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  next_of_kin_name: z.string().nullable().optional(),
+  next_of_kin_phone: z.string().nullable().optional(),
+  next_of_kin_relationship: z.string().nullable().optional(),
+  passport_photo_url: z.string().nullable().optional(),
+  currency_code: z.string().min(3).max(3).optional(),
+  nin_verification_status: z.string().optional(),
+  bvn_verification_status: z.string().optional(),
+  verification_provider: z.string().nullable().optional(),
+  last_verified_at: z.string().nullable().optional(),
+  investment_amount: z.coerce.number().nonnegative().optional(),
+  start_date: z.string().optional(),
+  maturity_date: z.string().optional(),
+  tenure: z.coerce.number().int().nonnegative().optional(),
+  percentage: z.coerce.number().nonnegative().optional(),
+  investment_type: z.enum(["Upfront", "Monthly", "Quarterly", "At Maturity"]).optional(),
+  expected_maturity_amount: z.coerce.number().nonnegative().optional(),
+  client_account_number: z.string().optional(),
+  client_bank: z.string().optional(),
+  brought_by: z.string().optional().nullable(),
+});
+
 const MIN_SIGNATURE_DATA_URL_LENGTH = 1500;
 
 const isMeaningfulSignature = (value: string) => {
@@ -266,10 +302,20 @@ export class CertificatesService {
       }),
     );
 
+    await Promise.all([
+      adminSupabase.from("dashboard_notifications").delete().eq("related_investor_id", investor.id),
+      adminSupabase.from("email_notifications").delete().eq("investor_id", investor.id),
+      adminSupabase.from("email_notifications_archive").delete().eq("investor_id", investor.id),
+      adminSupabase.from("notification_jobs").delete().eq("investor_id", investor.id),
+      adminSupabase.from("notification_jobs_archive").delete().eq("investor_id", investor.id),
+    ]);
+
     if (certificateIds.length) {
-      await adminSupabase.from("certificate_approval_events").delete().in("certificate_id", certificateIds);
-      await adminSupabase.from("notifications").delete().in("certificate_id", certificateIds);
-      await adminSupabase.from("certificates").delete().in("id", certificateIds);
+      await Promise.all([
+        adminSupabase.from("certificate_approval_events").delete().in("certificate_id", certificateIds),
+        adminSupabase.from("notifications").delete().in("certificate_id", certificateIds),
+        adminSupabase.from("certificates").delete().in("id", certificateIds),
+      ]);
     }
 
     await adminSupabase.from("investor_certificates").delete().eq("investor_id", investor.id);
@@ -289,6 +335,83 @@ export class CertificatesService {
     });
 
     return { message: "Investor deleted permanently." };
+  }
+
+  async updateInvestorAndRefreshCertificate(actor: AuthenticatedUser, investorId: string, payload: unknown) {
+    const input = updateInvestorSchema.parse(payload);
+    const investorBeforeUpdate = await this.getInvestorById(investorId);
+    const existingCertificate = await this.getLatestCertificateForInvestorById(
+      investorId,
+      investorBeforeUpdate.email,
+      investorBeforeUpdate.name,
+    );
+
+    this.assertDeletePermission(actor, investorBeforeUpdate.created_by);
+
+    if (existingCertificate) {
+      if (actor.role === "general_manager" && existingCertificate.created_by !== actor.id) {
+        throw new Error("General Managers can only refresh certificates they created.");
+      }
+
+      if (actor.role === "investment_manager" && existingCertificate.created_by !== actor.id) {
+        throw new Error("Investment Managers can only refresh certificates they created.");
+      }
+    }
+
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .update(input)
+      .eq("id", investorId)
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
+    }
+
+    if (existingCertificate) {
+      const updatedCertificate = await this.updateCertificate(existingCertificate.id, {
+        investor_id: data.id,
+        investor_name: data.name,
+        investor_email: data.email,
+        investor_phone: data.phone ?? null,
+        investor_reference_number: data.reference_number ?? null,
+        amount: Number(data.investment_amount ?? 0),
+        currency_code: data.currency_code ?? "NGN",
+        interest_rate: Number(data.percentage ?? 0),
+        investment_tenure: data.tenure ? `${data.tenure} months` : null,
+        principal_maturity_date: data.maturity_date ?? null,
+        interest_payment: this.buildInterestPaymentFromSnapshot(
+          Number(data.investment_amount ?? 0),
+          Number(data.percentage ?? 0),
+          data.tenure ? `${data.tenure} months` : undefined,
+          data.investment_type ?? undefined,
+          existingCertificate.interest_payment ?? null,
+        ),
+      });
+
+      const refreshedCertificate = await this.persistPdf(updatedCertificate, { investorId });
+
+      await insertAuditLog({
+        action: "certificate_refreshed_after_investor_update",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId: refreshedCertificate.id,
+        targetEmail: refreshedCertificate.investor_email,
+        metadata: {
+          investorId,
+          investorName: data.name,
+          updatedFields: Object.keys(input),
+        },
+      });
+
+      return data;
+    }
+
+    const refreshedCertificate = await this.refreshCertificateForInvestor(actor, investorId);
+
+    return data;
   }
 
   async createCertificate(actor: AuthenticatedUser, payload: unknown) {

@@ -14,7 +14,7 @@ import { calculateMaturityAmount, calculateMonthlyReturn, calculateTotalReturn, 
 import { formatCurrency } from '@/lib/format';
 import { INVESTOR_CATEGORY_OPTIONS, type InvestorCategory, getInvestorCategoryLabel } from '@/lib/investorCategories';
 import { useToast } from '@/hooks/use-toast';
-import { syncInvestorCertificate, useCreateInvestor, useInvestor, useUpdateInvestor } from '@/hooks/useInvestors';
+import { useCreateInvestor, useInvestor, useUpdateInvestor } from '@/hooks/useInvestors';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
@@ -345,14 +345,6 @@ export default function NewInvestment() {
         ? await updateInvestor.mutateAsync({ id: existingInvestor.id, ...investorPayload })
         : await createInvestor.mutateAsync(investorPayload);
       savedInvestorId = savedInvestor.id;
-
-      if (isEditMode) {
-        try {
-          await syncInvestorCertificate(savedInvestor.id);
-        } catch (syncError) {
-          console.error('Failed to refresh certificate after investor update:', syncError);
-        }
-      }
 
       toast({
         title: isEditMode ? 'Investor Updated' : 'Investment Created',

@@ -38,6 +38,16 @@ export const refreshInvestorCertificate = async (request: Request, response: Res
   }
 };
 
+export const updateInvestorAndRefreshCertificate = async (request: Request, response: Response) => {
+  try {
+    const investorId = getRouteParam(request.params.id);
+    const investor = await service.updateInvestorAndRefreshCertificate(request.authUser!, investorId, request.body);
+    response.json(investor);
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
 export const deleteInvestorCompletely = async (request: Request, response: Response) => {
   try {
     const investorId = getRouteParam(request.params.id);

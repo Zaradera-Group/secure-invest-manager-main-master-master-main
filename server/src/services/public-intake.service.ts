@@ -121,10 +121,12 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
   }
 
   const requestId = requestRecord.id as string;
+  const submittedAt = new Date().toISOString();
   const notificationPayload = buildPublicIntakeNotificationPayload({
     investor: input,
     requestId,
     maturityDate,
+    submittedAt,
   });
   const internalRecipients = await resolveInternalRecipients({
     assigneeUserId,
@@ -160,16 +162,18 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
           investor: input,
           requestId,
           maturityDate,
+          submittedAt,
         }),
       ),
     ),
     sendPlainEmail(
       input.email.trim().toLowerCase(),
-      "Your public intake submission was received",
+      "Zaraderavest Form Received – Confirmation",
       buildPublicIntakeInvestorEmailHtml({
         investor: input,
         requestId,
         maturityDate,
+        submittedAt,
       }),
     ),
   ]);
@@ -478,6 +482,7 @@ function buildPublicIntakeNotificationPayload(args: {
   investor: PublicInvestorIntakeInput;
   requestId: string;
   maturityDate: string;
+  submittedAt: string;
 }) {
   const relationship = args.investor.nextOfKinRelationship?.trim() || "Not provided";
   const address = args.investor.address?.trim() || "Not provided";
@@ -494,6 +499,7 @@ function buildPublicIntakeNotificationPayload(args: {
     `Amount: ${args.investor.investmentAmount.toLocaleString()}`,
     `Type: ${args.investor.investmentType}`,
     `Maturity Date: ${args.maturityDate}`,
+    `Submitted Date: ${formatDisplayDate(args.submittedAt)}`,
   ].join(" | ");
 }
 
@@ -501,6 +507,7 @@ function buildPublicIntakeInternalEmailHtml(args: {
   investor: PublicInvestorIntakeInput;
   requestId: string;
   maturityDate: string;
+  submittedAt: string;
 }) {
   const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
   const inboxLink = `${appUrl}/public-intake-inbox`;
@@ -523,6 +530,7 @@ function buildPublicIntakeInternalEmailHtml(args: {
       <p><strong>Next of Kin Relationship:</strong> ${escapeHtml(relationship)}</p>
       <p><strong>Next of Kin Phone:</strong> ${escapeHtml(args.investor.nextOfKinPhone?.trim() || "Not provided")}</p>
       <p><strong>Maturity Date:</strong> ${escapeHtml(args.maturityDate)}</p>
+      <p><strong>Submitted Date:</strong> ${escapeHtml(formatDisplayDate(args.submittedAt))}</p>
       <p><strong>Action:</strong> Review, copy, and convert this request into an investor record manually.</p>
       <p><strong>Open Inbox:</strong> <a href="${inboxLink}">${inboxLink}</a></p>
     </div>
@@ -533,18 +541,54 @@ function buildPublicIntakeInvestorEmailHtml(args: {
   investor: PublicInvestorIntakeInput;
   requestId: string;
   maturityDate: string;
+  submittedAt: string;
 }) {
+  const fullName = escapeHtml(args.investor.name.trim());
+  const submittedDate = escapeHtml(formatDisplayDate(args.submittedAt));
+  const nextOfKinName = escapeHtml(args.investor.nextOfKinName?.trim() || "Not provided");
+  const nextOfKinPhone = escapeHtml(args.investor.nextOfKinPhone?.trim() || "Not provided");
+  const nextOfKinRelationship = escapeHtml(args.investor.nextOfKinRelationship?.trim() || "Not provided");
+  const bankName = escapeHtml(args.investor.clientBank.trim());
+  const accountNumber = escapeHtml(args.investor.clientAccountNumber.trim());
+  const address = escapeHtml(args.investor.address?.trim() || "Not provided");
+  const gender = escapeHtml(args.investor.gender ?? "Not provided");
+
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
-      <h2 style="margin: 0 0 12px;">Public Intake Received</h2>
-      <p>Thank you, ${escapeHtml(args.investor.name.trim())}. Your submission has been received and queued for manual review.</p>
+      <h2 style="margin: 0 0 12px;">Zaraderavest form received</h2>
+      <p>Thank you, ${fullName}. Your submission has been received and queued for review.</p>
       <p><strong>Request ID:</strong> ${escapeHtml(args.requestId)}</p>
-      <p><strong>Amount:</strong> ${args.investor.investmentAmount.toLocaleString()}</p>
+      <p><strong>Submitted Date:</strong> ${submittedDate}</p>
+      <p><strong>Tenure (Months):</strong> ${escapeHtml(String(args.investor.tenure))}</p>
+      <p><strong>Investment Amount:</strong> ${args.investor.investmentAmount.toLocaleString()}</p>
       <p><strong>Type:</strong> ${escapeHtml(args.investor.investmentType)}</p>
       <p><strong>Maturity Date:</strong> ${escapeHtml(args.maturityDate)}</p>
-      <p>Your details will be reviewed internally before any investor record is created.</p>
+      <p><strong>Bank Details:</strong> ${bankName} - ${accountNumber}</p>
+      <p><strong>Address:</strong> ${address}</p>
+      <p><strong>Gender:</strong> ${gender}</p>
+      <p><strong>Next of Kin:</strong> ${nextOfKinName}</p>
+      <p><strong>Next of Kin Relationship:</strong> ${nextOfKinRelationship}</p>
+      <p><strong>Next of Kin Phone:</strong> ${nextOfKinPhone}</p>
+      <p>Your details have been received, your investment certificate will be sent to you in 72 hours. Thank you.</p>
+      <div style="margin-top: 20px; padding: 16px; border: 1px solid #d1d5db; border-radius: 10px; background: #f9fafb;">
+        <p style="margin: 0 0 10px; font-weight: 600;">Declaration & Consent</p>
+        <p style="margin: 0 0 12px;">
+          I/We hereby declare that the information provided is true and complete. I/We understand and accept the terms and agree to comply with the partnership.
+        </p>
+        <p style="margin: 0 0 8px;"><strong>Investor's OTP number:</strong> Verified during submission</p>
+        <p style="margin: 0;"><strong>Date:</strong> ${submittedDate}</p>
+      </div>
     </div>
   `;
+}
+
+function formatDisplayDate(value: string) {
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date);
 }
 
 function escapeHtml(value: string) {
