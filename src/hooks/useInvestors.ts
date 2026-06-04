@@ -138,6 +138,8 @@ const INVESTOR_UPDATE_EXTRA_QUERY_KEYS = [
   ['dashboard-notifications'],
   ['dashboard-notifications-unread-count'],
   ['notifications'],
+  ['certificate-preview-viewer'],
+  ['certificate-download-viewer'],
 ] as const;
 
 function invalidateQueryKeys(queryClient: QueryClient, keys: ReadonlyArray<readonly string[]>) {

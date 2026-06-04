@@ -104,6 +104,28 @@ const optionalSignatureSchema = z.object({
     .optional(),
 });
 
+const normalizeReferenceNumber = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.trunc(value);
+    return normalized >= 0 ? normalized : null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      const normalized = Math.trunc(parsed);
+      return normalized >= 0 ? normalized : null;
+    }
+  }
+
+  return null;
+};
+
 const parseTenureMonths = (investmentTenure?: string) => {
   if (!investmentTenure) {
     return 0;
@@ -217,7 +239,6 @@ export class CertificatesService {
       investorName: investor.name,
       investorEmail: investor.email,
       investorPhone: investor.phone ?? undefined,
-      investorReferenceNumber: investor.reference_number ?? undefined,
       amount: Number(investor.investment_amount ?? 0),
       currencyCode: investor.currency_code ?? "NGN",
       interestRate: Number(investor.percentage ?? 0),
@@ -234,7 +255,6 @@ export class CertificatesService {
         investorName: certificatePayload.investorName,
         investorEmail: certificatePayload.investorEmail,
         investorPhone: certificatePayload.investorPhone,
-        investorReferenceNumber: certificatePayload.investorReferenceNumber,
         amount: certificatePayload.amount,
         currencyCode: certificatePayload.currencyCode,
         interestRate: certificatePayload.interestRate,
@@ -258,7 +278,9 @@ export class CertificatesService {
       investor_name: investor.name,
       investor_email: investor.email,
       investor_phone: investor.phone ?? null,
-      investor_reference_number: investor.reference_number ?? latestCertificate.investor_reference_number ?? null,
+      investor_reference_number: normalizeReferenceNumber(investor.reference_number)
+        ?? latestCertificate.investor_reference_number
+        ?? null,
       amount: Number(investor.investment_amount ?? 0),
       currency_code: investor.currency_code ?? "NGN",
       interest_rate: Number(investor.percentage ?? 0),
@@ -370,47 +392,21 @@ export class CertificatesService {
       throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
     }
 
-    if (existingCertificate) {
-      const updatedCertificate = await this.updateCertificate(existingCertificate.id, {
-        investor_id: data.id,
-        investor_name: data.name,
-        investor_email: data.email,
-        investor_phone: data.phone ?? null,
-        investor_reference_number: data.reference_number ?? existingCertificate.investor_reference_number ?? null,
-        amount: Number(data.investment_amount ?? 0),
-        currency_code: data.currency_code ?? "NGN",
-        interest_rate: Number(data.percentage ?? 0),
-        investment_tenure: data.tenure ? `${data.tenure} months` : null,
-        principal_maturity_date: data.maturity_date ?? null,
-        interest_payment: this.buildInterestPaymentFromSnapshot(
-          Number(data.investment_amount ?? 0),
-          Number(data.percentage ?? 0),
-          data.tenure ? `${data.tenure} months` : undefined,
-          data.investment_type ?? undefined,
-          existingCertificate.interest_payment ?? null,
-        ),
-      });
-
-      const refreshedCertificate = await this.persistPdf(updatedCertificate, { investorId });
-
-      await insertAuditLog({
-        action: "certificate_refreshed_after_investor_update",
-        actorUserId: actor.id,
-        actorEmail: actor.email,
-        actorRole: actor.role,
-        certificateId: refreshedCertificate.id,
-        targetEmail: refreshedCertificate.investor_email,
-        metadata: {
-          investorId,
-          investorName: data.name,
-          updatedFields: Object.keys(input),
-        },
-      });
-
-      return data;
-    }
-
     const refreshedCertificate = await this.refreshCertificateForInvestor(actor, investorId);
+
+    await insertAuditLog({
+      action: "certificate_refreshed_after_investor_update",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      certificateId: refreshedCertificate.id,
+      targetEmail: refreshedCertificate.investor_email,
+      metadata: {
+        investorId,
+        investorName: data.name,
+        updatedFields: Object.keys(input),
+      },
+    });
 
     return data;
   }
@@ -1005,9 +1001,10 @@ export class CertificatesService {
     const investmentTenure = data?.tenure ? `${data.tenure} months` : (certificate.investment_tenure ?? null);
     const principalMaturityDate = data?.maturity_date ?? certificate.principal_maturity_date ?? null;
     const referenceNumber =
-      typeof investorContext?.investorReferenceNumber === "number"
-        ? investorContext.investorReferenceNumber
-        : (data?.reference_number ?? certificate.investor_reference_number ?? null);
+      normalizeReferenceNumber(investorContext?.investorReferenceNumber)
+        ?? normalizeReferenceNumber(data?.reference_number)
+        ?? certificate.investor_reference_number
+        ?? null;
     const interestPayment = this.buildInterestPaymentFromSnapshot(
       amount,
       interestRate,

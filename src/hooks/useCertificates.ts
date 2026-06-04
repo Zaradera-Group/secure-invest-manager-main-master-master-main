@@ -497,12 +497,13 @@ function getRequestBody(payload: {
   signatureDataUrl?: string;
 }) {
   if (payload.action === 'generate') {
+    const referenceNumber = Number(payload.investor.reference_number);
     return {
       investorId: payload.investor.id,
       investorName: payload.investor.name,
       investorEmail: payload.investor.email,
       investorPhone: payload.investor.phone,
-      investorReferenceNumber: payload.investor.reference_number ?? undefined,
+      investorReferenceNumber: Number.isFinite(referenceNumber) && referenceNumber >= 0 ? referenceNumber : undefined,
       amount: Number(payload.investor.investment_amount),
       currencyCode: String(payload.investor.currency_code ?? 'NGN'),
       interestRate: Number(payload.investor.percentage),

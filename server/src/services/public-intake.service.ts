@@ -495,6 +495,7 @@ function buildPublicIntakeNotificationPayload(args: {
     `Investor: ${args.investor.name.trim()}`,
     `Email: ${args.investor.email.trim().toLowerCase()}`,
     `Phone: ${args.investor.phone.trim()}`,
+    `Verified OTP: ${args.investor.verifiedOtpCode?.trim() || "Not provided"}`,
     `Address: ${address}`,
     `Gender: ${gender}`,
     `Next of Kin: ${args.investor.nextOfKinName?.trim() || "Not provided"} (${relationship})`,
@@ -530,6 +531,7 @@ function buildPublicIntakeInternalEmailHtml(args: {
       <p><strong>Name:</strong> ${escapeHtml(args.investor.name)}</p>
       <p><strong>Email:</strong> ${escapeHtml(args.investor.email)}</p>
       <p><strong>Phone:</strong> ${escapeHtml(args.investor.phone)}</p>
+      <p><strong>Verified OTP:</strong> ${escapeHtml(args.investor.verifiedOtpCode?.trim() || "Not provided")}</p>
       <p><strong>Address:</strong> ${escapeHtml(address)}</p>
       <p><strong>Gender:</strong> ${escapeHtml(gender)}</p>
       <p><strong>Amount:</strong> ${args.investor.investmentAmount.toLocaleString()}</p>
