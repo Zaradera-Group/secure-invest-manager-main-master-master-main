@@ -66,6 +66,12 @@ create policy "Workflow users can update public intake requests"
   using (public.can_access_certificate_workflow(auth.uid()))
   with check (public.can_access_certificate_workflow(auth.uid()));
 
+drop policy if exists "Workflow users can delete public intake requests" on public.public_intake_requests;
+create policy "Workflow users can delete public intake requests"
+  on public.public_intake_requests
+  for delete
+  using (public.can_access_certificate_workflow(auth.uid()));
+
 drop policy if exists "Workflow users can insert public intake requests" on public.public_intake_requests;
 create policy "Workflow users can insert public intake requests"
   on public.public_intake_requests

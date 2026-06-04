@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, Copy, RefreshCw, Archive, XCircle } from 'lucide-react';
+import { Check, Copy, RefreshCw, Archive, XCircle, Trash2 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/format';
@@ -55,6 +56,7 @@ export default function PublicIntakeInbox() {
   const [queryText, setQueryText] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | IntakeStatus>('all');
   const [notesById, setNotesById] = useState<Record<string, string>>({});
+  const [deleteTarget, setDeleteTarget] = useState<PublicIntakeRequest | null>(null);
 
   const { data: requests = [], isLoading } = useQuery({
     queryKey: ['public-intake-requests', role],
@@ -94,6 +96,32 @@ export default function PublicIntakeInbox() {
       toast({
         title: 'Update failed',
         description: error instanceof Error ? error.message : 'Could not update the request.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deleteRequest = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('public_intake_requests' as never)
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['public-intake-requests'] });
+      setDeleteTarget(null);
+      toast({
+        title: 'Deleted',
+        description: 'The public intake submission was removed from the queue.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'Could not delete the public intake request.',
         variant: 'destructive',
       });
     },
@@ -261,6 +289,16 @@ export default function PublicIntakeInbox() {
                       <XCircle className="w-4 h-4 mr-2" />
                       Reject
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setDeleteTarget(request)}
+                      disabled={deleteRequest.isPending}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -268,6 +306,35 @@ export default function PublicIntakeInbox() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-red-700">Delete public intake submission?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove the public intake record for{' '}
+              <span className="font-semibold text-foreground">{deleteTarget?.submitted_by_name ?? 'this investor'}</span>.
+              The request will disappear from the review queue and cannot be recovered.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteRequest.isPending}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                if (!deleteTarget) return;
+                void deleteRequest.mutateAsync(deleteTarget.id);
+              }}
+              disabled={deleteRequest.isPending}
+            >
+              {deleteRequest.isPending ? 'Deleting...' : 'Continue'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
