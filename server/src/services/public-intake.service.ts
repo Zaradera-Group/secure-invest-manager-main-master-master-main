@@ -140,7 +140,7 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
         user_role: recipient.role,
         recipient_user_id: recipient.userId ?? null,
         recipient_email: recipient.email,
-        title: "New public investor intake",
+        title: "Zaraderavest form received",
         detail: notificationPayload,
         message: notificationPayload,
         action_path: "/public-intake-inbox",
@@ -158,7 +158,7 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
     ...internalRecipients.map((recipient) =>
       sendPlainEmail(
         recipient.email,
-        `New public investor intake: ${input.name.trim()}`,
+        `Your Zaraderavest form has been received: ${input.name.trim()}`,
         buildPublicIntakeInternalEmailHtml({
           investor: input,
           requestId,
@@ -489,7 +489,8 @@ function buildPublicIntakeNotificationPayload(args: {
   const address = args.investor.address?.trim() || "Not provided";
   const gender = args.investor.gender ?? "Not provided";
 
-  return [
+  const lines = [
+    "Zaraderavest form received",
     `Request ID: ${args.requestId}`,
     `Investor: ${args.investor.name.trim()}`,
     `Email: ${args.investor.email.trim().toLowerCase()}`,
@@ -501,7 +502,13 @@ function buildPublicIntakeNotificationPayload(args: {
     `Type: ${args.investor.investmentType}`,
     `Maturity Date: ${args.maturityDate}`,
     `Submitted Date: ${formatDisplayDate(args.submittedAt)}`,
-  ].join(" | ");
+    "",
+    "I/We hereby declare that the information provided is true and complete. I/We understand and accept the terms and agree to comply with the partnership.",
+    `Investor's OTP number: ${args.investor.verifiedOtpCode?.trim() || "Not provided"}`,
+    `Date: ${formatDisplayDate(args.submittedAt)}`,
+  ];
+
+  return lines.join("\n");
 }
 
 function buildPublicIntakeInternalEmailHtml(args: {
@@ -518,7 +525,7 @@ function buildPublicIntakeInternalEmailHtml(args: {
 
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
-      <h2 style="margin: 0 0 12px;">New Public Investor Intake</h2>
+      <h2 style="margin: 0 0 12px;">Zaraderavest form received</h2>
       <p><strong>Request ID:</strong> ${escapeHtml(args.requestId)}</p>
       <p><strong>Name:</strong> ${escapeHtml(args.investor.name)}</p>
       <p><strong>Email:</strong> ${escapeHtml(args.investor.email)}</p>
@@ -534,6 +541,14 @@ function buildPublicIntakeInternalEmailHtml(args: {
       <p><strong>Submitted Date:</strong> ${escapeHtml(formatDisplayDate(args.submittedAt))}</p>
       <p><strong>Action:</strong> Review, copy, and convert this request into an investor record manually.</p>
       <p><strong>Open Inbox:</strong> <a href="${inboxLink}">${inboxLink}</a></p>
+      <div style="margin-top: 20px; padding: 16px; border: 1px solid #d1d5db; border-radius: 10px; background: #f9fafb;">
+        <p style="margin: 0 0 10px; font-weight: 600;">Declaration & Consent</p>
+        <p style="margin: 0 0 12px;">
+          I/We hereby declare that the information provided is true and complete. I/We understand and accept the terms and agree to comply with the partnership.
+        </p>
+        <p style="margin: 0 0 8px;"><strong>Investor's OTP number:</strong> ${escapeHtml(args.investor.verifiedOtpCode?.trim() || "Not provided")}</p>
+        <p style="margin: 0;"><strong>Date:</strong> ${escapeHtml(formatDisplayDate(args.submittedAt))}</p>
+      </div>
     </div>
   `;
 }

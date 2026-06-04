@@ -130,6 +130,15 @@ const INVESTOR_DELETE_EXTRA_QUERY_KEYS = [
   ['investor-certificate'],
   ['certificate-approval-events'],
 ] as const;
+const INVESTOR_UPDATE_EXTRA_QUERY_KEYS = [
+  ['investor-certificate'],
+  ['certificate-approval-events'],
+  ['certificate-inbox'],
+  ['pending-approvals'],
+  ['dashboard-notifications'],
+  ['dashboard-notifications-unread-count'],
+  ['notifications'],
+] as const;
 
 function invalidateQueryKeys(queryClient: QueryClient, keys: ReadonlyArray<readonly string[]>) {
   keys.forEach((queryKey) => {
@@ -143,6 +152,10 @@ function invalidateInvestorRelatedQueries(queryClient: QueryClient, includeDelet
   if (includeDeleteExtras) {
     invalidateQueryKeys(queryClient, INVESTOR_DELETE_EXTRA_QUERY_KEYS);
   }
+}
+
+function invalidateInvestorUpdateSideEffects(queryClient: QueryClient) {
+  invalidateQueryKeys(queryClient, INVESTOR_UPDATE_EXTRA_QUERY_KEYS);
 }
 
 async function getAuthenticatedBackendToken() {
@@ -608,6 +621,7 @@ export function useUpdateInvestor() {
     },
     onSuccess: () => {
       invalidateInvestorRelatedQueries(queryClient, true);
+      invalidateInvestorUpdateSideEffects(queryClient);
     },
   });
 }

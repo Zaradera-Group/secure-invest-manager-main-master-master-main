@@ -78,7 +78,7 @@ export function useInvestorCertificate(investor?: Pick<WorkflowInvestor, 'id' | 
   const { role } = useAuth();
 
   return useQuery({
-    queryKey: ['investor-certificate', investor?.email, investor?.name, role],
+    queryKey: ['investor-certificate', investor?.id, investor?.email, investor?.name, role],
     enabled: !!investor?.email && !!investor?.name && !!role,
     queryFn: async () => {
       if (!investor?.email || !investor.name) {
