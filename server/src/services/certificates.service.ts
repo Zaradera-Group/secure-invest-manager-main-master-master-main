@@ -278,9 +278,6 @@ export class CertificatesService {
       investor_name: investor.name,
       investor_email: investor.email,
       investor_phone: investor.phone ?? null,
-      investor_reference_number: normalizeReferenceNumber(investor.reference_number)
-        ?? latestCertificate.investor_reference_number
-        ?? null,
       amount: Number(investor.investment_amount ?? 0),
       currency_code: investor.currency_code ?? "NGN",
       interest_rate: Number(investor.percentage ?? 0),
@@ -1330,9 +1327,11 @@ export class CertificatesService {
     certificateId: string,
     updates: Partial<CertificateRecord> & Record<string, unknown>,
   ) {
+    const { investor_reference_number: _ignoredInvestorReferenceNumber, ...sanitizedUpdates } = updates;
+
     const { data, error } = await adminSupabase
       .from("certificates")
-      .update(updates)
+      .update(sanitizedUpdates)
       .eq("id", certificateId)
       .select("*")
       .single<CertificateRecord>();
