@@ -997,19 +997,7 @@ function readProviderMessage(payload: Record<string, unknown> | null) {
   return null
 }
 
-function formatOrdinal(value: number): string {
-  const remainder10 = value % 10
-  const remainder100 = value % 100
-
-  if (remainder10 === 1 && remainder100 !== 11) return `${value}st`
-  if (remainder10 === 2 && remainder100 !== 12) return `${value}nd`
-  if (remainder10 === 3 && remainder100 !== 13) return `${value}rd`
-  return `${value}th`
-}
-
-function generateBirthdayEmail(name: string, age: number | null): string {
-  const ageText = age ? `your ${formatOrdinal(age)}` : ''
-
+function generateBirthdayEmail(name: string, _age: number | null): string {
   return `
     <!DOCTYPE html>
     <html>
@@ -1040,8 +1028,7 @@ function generateBirthdayEmail(name: string, age: number | null): string {
             <div class="name">Dear ${name},</div>
             <div class="message">
               <p>Wishing you a fantastic birthday filled with joy, laughter, and the moments that matter most.</p>
-              ${age ? `<p>May ${ageText} be filled with success, good health, and prosperity.</p>` : ''}
-              <p>Thank you for being a valued member of our investment community. We look forward to many more successful years together.</p>
+              <p>Thank you for your continued trust and confidence in Zaraderavest. We remain committed to helping you achieve your financial goals through secure and rewarding investment opportunities.</p>
               <p><strong>Best wishes from all of us at Zaradera Credit Limited.</strong></p>
             </div>
           </div>

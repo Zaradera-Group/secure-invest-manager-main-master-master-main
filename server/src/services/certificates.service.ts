@@ -126,6 +126,79 @@ const normalizeReferenceNumber = (value: unknown) => {
   return null;
 };
 
+const getTodayIsoDate = () => new Date().toISOString().split("T")[0];
+
+const hasInvestmentChanged = (
+  before: {
+    investment_amount: number;
+    tenure: number | null;
+    percentage: number;
+    investment_type: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
+    investor_category?: string | null;
+    start_date: string;
+    maturity_date: string | null;
+    currency_code: string | null;
+    client_account_number: string;
+    client_bank: string;
+    expected_maturity_amount: number;
+    category_reference_name?: string | null;
+    category_reference_email?: string | null;
+    category_notes?: string | null;
+  },
+  after: {
+    investment_amount?: number;
+    tenure?: number | null;
+    percentage?: number;
+    investment_type?: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
+    investor_category?: string | null;
+    start_date?: string;
+    maturity_date?: string | null;
+    currency_code?: string | null;
+    client_account_number?: string;
+    client_bank?: string;
+    expected_maturity_amount?: number;
+    category_reference_name?: string | null;
+    category_reference_email?: string | null;
+    category_notes?: string | null;
+  },
+) => {
+  const beforeEntry = [
+    Number(before.investment_amount ?? 0),
+    before.tenure ?? null,
+    Number(before.percentage ?? 0),
+    before.investment_type ?? null,
+    before.investor_category ?? null,
+    before.start_date,
+    before.maturity_date ?? null,
+    (before.currency_code ?? "NGN").toUpperCase(),
+    before.client_account_number,
+    before.client_bank,
+    Number(before.expected_maturity_amount ?? 0),
+    before.category_reference_name ?? null,
+    before.category_reference_email ?? null,
+    before.category_notes ?? null,
+  ];
+
+  const afterEntry = [
+    Number(after.investment_amount ?? before.investment_amount ?? 0),
+    after.tenure ?? before.tenure ?? null,
+    Number(after.percentage ?? before.percentage ?? 0),
+    after.investment_type ?? before.investment_type ?? null,
+    after.investor_category ?? before.investor_category ?? null,
+    after.start_date ?? before.start_date,
+    after.maturity_date ?? before.maturity_date ?? null,
+    (after.currency_code ?? before.currency_code ?? "NGN").toUpperCase(),
+    after.client_account_number ?? before.client_account_number,
+    after.client_bank ?? before.client_bank,
+    Number(after.expected_maturity_amount ?? before.expected_maturity_amount ?? 0),
+    after.category_reference_name ?? before.category_reference_name ?? null,
+    after.category_reference_email ?? before.category_reference_email ?? null,
+    after.category_notes ?? before.category_notes ?? null,
+  ];
+
+  return beforeEntry.some((value, index) => afterEntry[index] !== value);
+};
+
 const parseTenureMonths = (investmentTenure?: string) => {
   if (!investmentTenure) {
     return 0;
@@ -231,9 +304,14 @@ export class CertificatesService {
     return data;
   }
 
-  async refreshCertificateForInvestor(actor: AuthenticatedUser, investorId: string) {
+  async refreshCertificateForInvestor(
+    actor: AuthenticatedUser,
+    investorId: string,
+    options?: { issueDate?: string },
+  ) {
     const investor = await this.getInvestorById(investorId);
     const latestCertificate = await this.getLatestCertificateForInvestorById(investorId, investor.email, investor.name);
+    const issueDate = options?.issueDate ?? latestCertificate?.issue_date ?? getTodayIsoDate();
     const certificatePayload = {
       investorId: investor.id,
       investorName: investor.name,
@@ -255,11 +333,11 @@ export class CertificatesService {
         investorName: certificatePayload.investorName,
         investorEmail: certificatePayload.investorEmail,
         investorPhone: certificatePayload.investorPhone,
+        issueDate,
         amount: certificatePayload.amount,
         currencyCode: certificatePayload.currencyCode,
         interestRate: certificatePayload.interestRate,
         investmentType: certificatePayload.investmentType,
-        issueDate: certificatePayload.issueDate,
         investmentTenure: certificatePayload.investmentTenure,
         principalMaturityDate: certificatePayload.principalMaturityDate,
       });
@@ -278,6 +356,7 @@ export class CertificatesService {
       investor_name: investor.name,
       investor_email: investor.email,
       investor_phone: investor.phone ?? null,
+      issue_date: issueDate,
       amount: Number(investor.investment_amount ?? 0),
       currency_code: investor.currency_code ?? "NGN",
       interest_rate: Number(investor.percentage ?? 0),
@@ -389,7 +468,11 @@ export class CertificatesService {
       throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
     }
 
-    const refreshedCertificate = await this.refreshCertificateForInvestor(actor, investorId);
+    const issueDate = hasInvestmentChanged(investorBeforeUpdate, input)
+      ? getTodayIsoDate()
+      : existingCertificate?.issue_date ?? getTodayIsoDate();
+
+    const refreshedCertificate = await this.refreshCertificateForInvestor(actor, investorId, { issueDate });
 
     await insertAuditLog({
       action: "certificate_refreshed_after_investor_update",
@@ -414,6 +497,7 @@ export class CertificatesService {
     }
 
     const input = createCertificateSchema.parse(payload);
+    const issueDate = input.issueDate ?? getTodayIsoDate();
     const calculatedInterestPayment = calculateInterestPayment(
       input.amount,
       input.interestRate,
@@ -443,7 +527,7 @@ export class CertificatesService {
         amount: input.amount,
         currency_code: input.currencyCode,
         interest_rate: input.interestRate,
-        issue_date: input.issueDate ?? null,
+        issue_date: issueDate,
         investment_tenure: input.investmentTenure ?? null,
         principal_maturity_date: input.principalMaturityDate ?? null,
         interest_payment: interestPaymentDescription,
@@ -1045,9 +1129,13 @@ export class CertificatesService {
       investment_amount: number;
       currency_code: string | null;
       percentage: number;
+      start_date: string;
       tenure: number | null;
       maturity_date: string | null;
       investment_type: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
+      client_account_number: string;
+      client_bank: string;
+      expected_maturity_amount: number;
     };
   }
 

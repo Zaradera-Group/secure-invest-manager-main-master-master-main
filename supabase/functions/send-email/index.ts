@@ -91,8 +91,9 @@ Deno.serve(async (req) => {
       throw new Error('RESEND_API_KEY not configured')
     }
 
+    const from = Deno.env.get('RESEND_FROM_EMAIL') ?? 'Zaradera Credit Limited <noreply@zaraderacredit.com>'
     const emailPayload = {
-      from: 'Zaradera Credit Limited <noreply@zaraderacredit.com>',
+      from,
       to: [emailData.to],
       subject: emailData.subject,
       html: emailData.html,

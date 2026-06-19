@@ -291,6 +291,7 @@ export async function sendFinalCertificate(
   }
 
   const certificateUrl = await regenerateAndPersistCertificate(serviceClient, certificate)
+  const downloadLink = await createSignedCertificateLink(serviceClient, certificateUrl)
   await sendResendEmail({
     to: certificate.investor_email,
     subject: 'Your final investment certificate',
@@ -298,7 +299,7 @@ export async function sendFinalCertificate(
       headline: 'Your investment certificate is ready',
       recipientLabel: certificate.investor_name,
       body: 'Your certificate has completed the approval workflow and is now available for download.',
-      certificateUrl,
+      certificateUrl: downloadLink,
     }),
   })
 
@@ -377,6 +378,47 @@ async function regenerateAndPersistCertificate(
 
   if (updateError) throw updateError
   return certificateUrl
+}
+
+async function createSignedCertificateLink(
+  serviceClient: ReturnType<typeof createClient>,
+  certificateUrl: string,
+) {
+  const storagePath = extractStoragePath(certificateUrl)
+  if (!storagePath) {
+    throw new Error('Failed to resolve the certificate download path.')
+  }
+
+  const { data, error } = await serviceClient.storage
+    .from('certificates')
+    .createSignedUrl(storagePath, 60 * 60 * 24 * 7)
+
+  if (error || !data?.signedUrl) {
+    throw error ?? new Error('Failed to create certificate download link.')
+  }
+
+  return data.signedUrl
+}
+
+function extractStoragePath(value: string) {
+  const normalized = value.trim()
+  if (!normalized) return null
+
+  if (!normalized.includes('/storage/v1/object/')) {
+    return normalized
+  }
+
+  const publicMatch = normalized.match(/\/storage\/v1\/object\/public\/[^/]+\/(.+)$/)
+  if (publicMatch?.[1]) {
+    return decodeURIComponent(publicMatch[1])
+  }
+
+  const signedMatch = normalized.match(/\/storage\/v1\/object\/sign\/[^/]+\/(.+)$/)
+  if (signedMatch?.[1]) {
+    return decodeURIComponent(signedMatch[1])
+  }
+
+  return null
 }
 
 async function notifyRole(
@@ -535,10 +577,11 @@ function buildWorkflowEmailHtml(args: {
       <p>Dear ${args.recipientLabel},</p>
       <p>${args.body}</p>
       <p>
-        <a href="${args.certificateUrl}" style="display:inline-block;padding:12px 20px;background:#0f4c81;color:#fff;text-decoration:none;border-radius:6px;">
+        <a href="${args.certificateUrl}" target="_blank" rel="noreferrer" style="display:inline-block;padding:12px 20px;background:#0f4c81;color:#fff;text-decoration:none;border-radius:6px;">
           Open Certificate
         </a>
       </p>
+      <p>If the button does not open automatically, use this link: <a href="${args.certificateUrl}">${args.certificateUrl}</a></p>
       <p>Regards,<br />Zaradera Credit Limited</p>
     </div>
   `

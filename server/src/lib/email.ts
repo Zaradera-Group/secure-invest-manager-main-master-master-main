@@ -55,9 +55,7 @@ export const sendCeoNotificationEmail = async (email: string, certificate: Certi
   });
 };
 
-export const sendBirthdayEmail = async (email: string, name: string, age: number | null) => {
-  const ageText = age ? `your ${formatOrdinal(age)}` : '';
-
+export const sendBirthdayEmail = async (email: string, name: string, _age: number | null) => {
   const html = `
     <!DOCTYPE html>
     <html>
@@ -88,8 +86,7 @@ export const sendBirthdayEmail = async (email: string, name: string, age: number
             <div class="name">Dear ${name},</div>
             <div class="message">
               <p>Wishing you a fantastic birthday filled with joy, laughter, and the moments that matter most.</p>
-              ${age ? `<p>May ${ageText} be filled with success, good health, and prosperity.</p>` : ''}
-              <p>Thank you for being a valued member of our investment community. We look forward to many more successful years together.</p>
+              <p>Thank you for your continued trust and confidence in Zaraderavest. We remain committed to helping you achieve your financial goals through secure and rewarding investment opportunities.</p>
               <p><strong>Best wishes from all of us at Zaradera Credit Limited.</strong></p>
             </div>
           </div>
@@ -110,25 +107,28 @@ export const sendBirthdayEmail = async (email: string, name: string, age: number
   });
 };
 
-function formatOrdinal(value: number): string {
-  const remainder10 = value % 10;
-  const remainder100 = value % 100;
-  if (remainder10 === 1 && remainder100 !== 11) return `${value}st`;
-  if (remainder10 === 2 && remainder100 !== 12) return `${value}nd`;
-  if (remainder10 === 3 && remainder100 !== 13) return `${value}rd`;
-  return `${value}th`;
-}
-
 export const sendInvestorCertificateEmail = async (
   email: string,
   certificate: CertificateRecord,
   certificateLink?: string | null,
 ) => {
-  const resolvedCertificateLink = certificateLink ?? certificate.certificate_url ?? "#";
+  const resolvedCertificateLink = certificateLink ?? certificate.certificate_url;
+
+  if (!resolvedCertificateLink) {
+    throw new Error('A certificate download link is required before sending the investor email.');
+  }
 
   await sendEmail({
     email,
     subject: "Your investment certificate",
-    html: `<p>Your certificate has been approved and issued.</p><p><a href="${resolvedCertificateLink}">Download certificate</a></p>`,
+    html: `
+      <p>Your certificate has been approved and issued.</p>
+      <p>
+        <a href="${resolvedCertificateLink}" target="_blank" rel="noreferrer" style="display:inline-block;padding:12px 18px;background:#0f4c81;color:#ffffff;text-decoration:none;border-radius:6px;">
+          Download certificate
+        </a>
+      </p>
+      <p>If the button does not open automatically, use this link: <a href="${resolvedCertificateLink}">${resolvedCertificateLink}</a></p>
+    `,
   });
 };
