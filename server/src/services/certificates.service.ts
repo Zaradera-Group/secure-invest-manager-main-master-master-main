@@ -793,6 +793,24 @@ export class CertificatesService {
     await this.assertCertificateAccess(certificate, actor);
 
     certificate = await this.ensureCertificateFile(certificate);
+
+    const existingDownloadUrl = this.resolveCertificateUrl(certificate.certificate_url);
+    if (existingDownloadUrl) {
+      await insertAuditLog({
+        action: "certificate_download_link_generated",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId,
+        targetEmail: certificate.investor_email,
+        metadata: {
+          deliveryMode: "existing_url",
+        },
+      });
+
+      return { signedUrl: existingDownloadUrl };
+    }
+
     const storagePath = await this.getCertificateStoragePath(certificate);
 
     const { data, error } = await adminSupabase.storage
@@ -820,6 +838,30 @@ export class CertificatesService {
     await this.assertCertificateAccess(certificate, actor);
 
     certificate = await this.ensureCertificateFile(certificate);
+
+    const existingDownloadUrl = this.resolveCertificateUrl(certificate.certificate_url);
+    if (existingDownloadUrl) {
+      const response = await fetch(existingDownloadUrl);
+      if (response.ok) {
+        await insertAuditLog({
+          action: "certificate_download_link_generated",
+          actorUserId: actor.id,
+          actorEmail: actor.email,
+          actorRole: actor.role,
+          certificateId,
+          targetEmail: certificate.investor_email,
+          metadata: {
+            deliveryMode: "existing_url_direct_file",
+          },
+        });
+
+        return {
+          fileName: `${certificate.investor_name.replace(/\s+/g, "-").toLowerCase()}-certificate.pdf`,
+          bytes: Buffer.from(await response.arrayBuffer()),
+        };
+      }
+    }
+
     const storagePath = await this.getCertificateStoragePath(certificate);
 
     const { data, error } = await adminSupabase.storage
@@ -1316,6 +1358,21 @@ export class CertificatesService {
     }
 
     return null;
+  }
+
+  private resolveCertificateUrl(value?: string | null) {
+    const normalized = value?.trim();
+    if (!normalized || !/^https?:\/\//i.test(normalized)) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(normalized);
+      const isStorageAsset = parsed.pathname.includes('/storage/v1/object/');
+      return isStorageAsset ? normalized : null;
+    } catch {
+      return null;
+    }
   }
 
   private async getSignatoryNames(): Promise<CertificateSignatoryNames> {
