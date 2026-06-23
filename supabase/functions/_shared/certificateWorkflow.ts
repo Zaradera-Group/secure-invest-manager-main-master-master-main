@@ -394,8 +394,15 @@ async function drawSignatureIfPresent(
   }
 
   const response = await fetch(signatureUrl)
+  if (!response.ok) {
+    page.drawText(`${label}: Pending`, { x, y, size: 10, color: rgb(0.5, 0.2, 0.2) })
+    return
+  }
+
   const bytes = new Uint8Array(await response.arrayBuffer())
-  const image = signatureUrl.includes('png') ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
+  const contentType = response.headers.get('content-type') ?? ''
+  const isPng = contentType.includes('png') || signatureUrl.toLowerCase().includes('.png')
+  const image = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
   page.drawImage(image, { x, y, width: 120, height: 40 })
   page.drawText(label, { x, y: y - 12, size: 9, color: rgb(0.2, 0.2, 0.2) })
 }

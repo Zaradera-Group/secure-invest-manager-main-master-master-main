@@ -40,9 +40,30 @@ const drawSignature = async (
   }
 
   try {
-    const base64Payload = signature.includes(",") ? signature.split(",")[1] : signature;
-    const bytes = Uint8Array.from(Buffer.from(base64Payload, "base64"));
-    const image = signature.includes("image/jpeg")
+    let bytes: Uint8Array | null = null;
+    let isJpeg = false;
+
+    if (/^https?:\/\//i.test(signature)) {
+      const response = await fetch(signature);
+      if (!response.ok) {
+        return;
+      }
+
+      bytes = new Uint8Array(await response.arrayBuffer());
+      isJpeg = (response.headers.get("content-type")?.includes("jpeg") ?? false)
+        || signature.toLowerCase().includes(".jpg")
+        || signature.toLowerCase().includes(".jpeg");
+    } else {
+      const base64Payload = signature.includes(",") ? signature.split(",")[1] : signature;
+      bytes = Uint8Array.from(Buffer.from(base64Payload, "base64"));
+      isJpeg = signature.includes("image/jpeg") || signature.toLowerCase().includes(".jpg") || signature.toLowerCase().includes(".jpeg");
+    }
+
+    if (!bytes?.length) {
+      return;
+    }
+
+    const image = isJpeg
       ? await pdfDoc.embedJpg(bytes)
       : await pdfDoc.embedPng(bytes);
 
