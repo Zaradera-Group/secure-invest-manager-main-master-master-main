@@ -1,6 +1,10 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'npm:pdf-lib'
 
 type SignatureSource = string | null | undefined
+type SignatureImage = {
+  bytes: Uint8Array
+  isPng: boolean
+} | null
 
 export type CertificatePdfData = {
   investorName: string
@@ -20,6 +24,7 @@ export async function buildCertificatePdf(data: CertificatePdfData) {
   const page = pdf.addPage([595.28, 841.89])
   const titleFont = await pdf.embedFont(StandardFonts.HelveticaBold)
   const bodyFont = await pdf.embedFont(StandardFonts.Helvetica)
+  const ceoSealBytes = await loadCeoSealBytes()
 
   page.drawRectangle({
     x: 28,
@@ -139,6 +144,10 @@ export async function buildCertificatePdf(data: CertificatePdfData) {
     signature: data.generalManagerSignature,
   })
 
+  if (data.ceoSignature || data.statusLabel.toLowerCase().includes('approved')) {
+    await drawCeoSealIfAvailable(pdf, page, ceoSealBytes)
+  }
+
   return await pdf.save()
 }
 
@@ -176,8 +185,8 @@ async function drawSignatureBlock(
     return
   }
 
-  const imageBytes = await readSignatureBytes(signature)
-  if (!imageBytes) {
+  const signatureImage = await readSignatureImage(signature)
+  if (!signatureImage) {
     page.drawText('Signature on file', {
       x,
       y: y - 28,
@@ -188,9 +197,9 @@ async function drawSignatureBlock(
     return
   }
 
-  const embeddedImage = isPngSignature(signature)
-    ? await pdf.embedPng(imageBytes)
-    : await pdf.embedJpg(imageBytes)
+  const embeddedImage = signatureImage.isPng
+    ? await pdf.embedPng(signatureImage.bytes)
+    : await pdf.embedJpg(signatureImage.bytes)
 
   const scaled = embeddedImage.scale(0.35)
   page.drawImage(embeddedImage, {
@@ -201,23 +210,73 @@ async function drawSignatureBlock(
   })
 }
 
-async function readSignatureBytes(signature: string) {
+async function readSignatureImage(signature: string): Promise<SignatureImage> {
   if (signature.startsWith('data:image/')) {
-    const base64 = signature.split(',', 2)[1]
-    return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+    const [header, base64] = signature.split(',', 2)
+    if (!base64) {
+      return null
+    }
+
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+    return {
+      bytes,
+      isPng: header.includes('image/png'),
+    }
   }
 
   if (signature.startsWith('http://') || signature.startsWith('https://')) {
     const response = await fetch(signature)
     if (!response.ok) return null
-    return new Uint8Array(await response.arrayBuffer())
+
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    const contentType = response.headers.get('content-type') ?? ''
+    return {
+      bytes,
+      isPng: contentType.includes('png') || signature.toLowerCase().includes('.png'),
+    }
   }
 
   return null
 }
 
-function isPngSignature(signature: string) {
-  return signature.startsWith('data:image/png') || signature.endsWith('.png')
+async function loadCeoSealBytes() {
+  const appUrl = Deno.env.get('PUBLIC_APP_URL')?.trim()
+  if (!appUrl) {
+    return null
+  }
+
+  try {
+    const response = await fetch(new URL('/assets/zaradera-seal.png', appUrl).toString())
+    if (!response.ok) {
+      return null
+    }
+
+    return new Uint8Array(await response.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+async function drawCeoSealIfAvailable(
+  pdf: PDFDocument,
+  page: PDFPage,
+  sealBytes: Uint8Array | null,
+) {
+  if (!sealBytes) {
+    return
+  }
+
+  try {
+    const seal = await pdf.embedPng(sealBytes)
+    page.drawImage(seal, {
+      x: 445,
+      y: 96,
+      width: 92,
+      height: 92,
+    })
+  } catch {
+    // Leave the CEO seal area empty if the image cannot be decoded.
+  }
 }
 
 function formatCurrency(amount: number, currency: string = 'USD') {
