@@ -21,19 +21,24 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => value === true || value === "true"),
+  SMS_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === true || value === "true")),
   TWILIO_ACCOUNT_SID: z.string().optional().transform((value) => value?.trim() || undefined),
   TWILIO_AUTH_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
   TWILIO_MESSAGING_SERVICE_SID: z.string().optional().transform((value) => value?.trim() || undefined),
   TWILIO_FROM_NUMBER: z.string().optional().transform((value) => value?.trim() || undefined),
+  TWILIO_PHONE_NUMBER: z.string().optional().transform((value) => value?.trim() || undefined),
   TWILIO_VERIFY_SERVICE_SID: z.string().optional().transform((value) => value?.trim() || undefined),
   SMS_DELIVERY_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()
-    .transform((value) => value === true || value === "true"),
+    .transform((value) => (value === undefined ? undefined : value === true || value === "true")),
   BIRTHDAY_SMS_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()
-    .transform((value) => value === true || value === "true"),
+    .transform((value) => (value === undefined ? undefined : value === true || value === "true")),
   BIRTHDAY_SMS_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   BIRTHDAY_SMS_TIMEZONE: z.string().optional().transform((value) => value?.trim() || undefined),
   PUBLIC_INTAKE_ASSIGNEE_USER_ID: z.string().optional().transform((value) => value?.trim() || undefined),

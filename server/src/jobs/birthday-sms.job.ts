@@ -94,11 +94,6 @@ export async function runBirthdaySmsJob(now = new Date()) {
 }
 
 export function startBirthdaySmsJob() {
-  if (!env.BIRTHDAY_SMS_ENABLED) {
-    console.log("[birthday-sms-job] disabled");
-    return null;
-  }
-
   const schedule = env.BIRTHDAY_SMS_CRON || DEFAULT_BIRTHDAY_CRON;
   const timezone = env.BIRTHDAY_SMS_TIMEZONE || "Africa/Lagos";
 
@@ -106,15 +101,25 @@ export function startBirthdaySmsJob() {
     throw new Error(`Invalid birthday SMS cron expression: ${schedule}`);
   }
 
-  console.log(`[birthday-sms-job] scheduled with cron "${schedule}" (${timezone})`);
-
-  return cron.schedule(
+  const job = cron.schedule(
     schedule,
     () => {
+      if (env.SMS_ENABLED !== true) {
+        return;
+      }
+
       void runBirthdaySmsJob();
     },
     {
       timezone,
     },
   );
+
+  if (env.SMS_ENABLED !== true) {
+    console.log("Birthday SMS job is inactive - awaiting Twilio compliance approval");
+  } else {
+    console.log(`[birthday-sms-job] scheduled with cron "${schedule}" (${timezone})`);
+  }
+
+  return job;
 }

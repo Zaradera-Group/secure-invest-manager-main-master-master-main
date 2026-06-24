@@ -668,11 +668,14 @@ export class CertificatesService {
         refreshedCertificate,
         signedCertificateLink,
       );
-      if (refreshedCertificate.investor_phone) {
-        await sendInvestorCertificateSms(
-          refreshedCertificate.investor_phone,
-          refreshedCertificate,
-          signedCertificateLink,
+      const investorPhone = refreshedCertificate.investor_phone?.trim();
+      if (investorPhone) {
+        await this.sendSmsSafely("investor certificate", () =>
+          sendInvestorCertificateSms(
+            investorPhone,
+            refreshedCertificate,
+            signedCertificateLink,
+          )
         );
       }
 
@@ -757,8 +760,11 @@ export class CertificatesService {
 
     const signedCertificateLink = await this.createInvestorCertificateEmailLink(certificate);
     await sendInvestorCertificateEmail(certificate.investor_email, certificate, signedCertificateLink);
-    if (certificate.investor_phone) {
-      await sendInvestorCertificateSms(certificate.investor_phone, certificate, signedCertificateLink);
+    const investorPhone = certificate.investor_phone?.trim();
+    if (investorPhone) {
+      await this.sendSmsSafely("investor certificate", () =>
+        sendInvestorCertificateSms(investorPhone, certificate, signedCertificateLink)
+      );
     }
     const sentCertificate = await this.updateCertificate(certificateId, {
       sent_at: new Date().toISOString(),
@@ -961,12 +967,16 @@ export class CertificatesService {
           return;
         }
 
+        const recipientPhone = recipient.phone.trim();
+
         if (status === "pending_manager") {
-          await sendManagerNotificationSms(recipient.phone, certificate);
+          await this.sendSmsSafely("manager notification", () => sendManagerNotificationSms(recipientPhone, certificate));
         } else if (status === "pending_general_manager") {
-          await sendGeneralManagerNotificationSms(recipient.phone, certificate);
+          await this.sendSmsSafely("general manager notification", () =>
+            sendGeneralManagerNotificationSms(recipientPhone, certificate)
+          );
         } else {
-          await sendCeoNotificationSms(recipient.phone, certificate);
+          await this.sendSmsSafely("CEO notification", () => sendCeoNotificationSms(recipientPhone, certificate));
         }
       }),
     );
@@ -1007,6 +1017,14 @@ export class CertificatesService {
 
     if (error) {
       throw new Error(`Failed to insert notification: ${error.message}`);
+    }
+  }
+
+  private async sendSmsSafely(label: string, action: () => Promise<unknown>) {
+    try {
+      await action();
+    } catch (error) {
+      console.warn(`[certificates.sms] ${label} SMS failed:`, error);
     }
   }
 

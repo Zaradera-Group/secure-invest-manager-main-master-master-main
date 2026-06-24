@@ -10,6 +10,13 @@ type SmsDeliveryResult = {
   message?: string;
 };
 
+type DisabledSmsResponse = {
+  sid: string;
+  status: "disabled";
+  message: string;
+  disabled: true;
+};
+
 type BirthdayRecipient = {
   name: string;
   phone: string;
@@ -30,31 +37,46 @@ class NotificationServiceError extends Error {
 }
 
 class TwilioNotificationService {
-  private readonly enabled: boolean;
+  private readonly smsConfigured: boolean;
+  private readonly verifyConfigured: boolean;
   private readonly accountSid?: string;
   private readonly authToken?: string;
   private readonly messagingServiceSid?: string;
   private readonly fromNumber?: string;
+  private readonly phoneNumber?: string;
   private readonly verifyServiceSid?: string;
 
   constructor() {
-    this.enabled = env.SMS_DELIVERY_ENABLED;
     this.accountSid = env.TWILIO_ACCOUNT_SID;
     this.authToken = env.TWILIO_AUTH_TOKEN;
     this.messagingServiceSid = env.TWILIO_MESSAGING_SERVICE_SID;
     this.fromNumber = env.TWILIO_FROM_NUMBER;
+    this.phoneNumber = env.TWILIO_PHONE_NUMBER;
     this.verifyServiceSid = env.TWILIO_VERIFY_SERVICE_SID;
+    this.smsConfigured = Boolean(this.accountSid && this.authToken && (this.messagingServiceSid || this.fromNumber || this.phoneNumber));
+    this.verifyConfigured = Boolean(this.accountSid && this.authToken && this.verifyServiceSid);
+  }
+
+  isConfigured() {
+    return this.smsConfigured;
   }
 
   async sendSms(to: string, message: string) {
-    if (!this.enabled || !this.accountSid || !this.authToken) {
-      console.log(`[sms] skipped delivery to ${to}: SMS delivery is disabled or not configured`);
-      return null;
+    if (!this.isSmsEnabled()) {
+      return this.disabledSmsResponse();
     }
 
-    if (!this.messagingServiceSid && !this.fromNumber) {
+    if (!this.smsConfigured) {
       throw new NotificationServiceError(
-        "Twilio SMS is not configured: provide TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER",
+        "Twilio SMS is not configured: provide TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and either TWILIO_MESSAGING_SERVICE_SID, TWILIO_FROM_NUMBER, or TWILIO_PHONE_NUMBER",
+      );
+    }
+
+    const senderNumber = this.fromNumber ?? this.phoneNumber;
+
+    if (!this.messagingServiceSid && !senderNumber) {
+      throw new NotificationServiceError(
+        "Twilio SMS is not configured: provide TWILIO_MESSAGING_SERVICE_SID, TWILIO_FROM_NUMBER, or TWILIO_PHONE_NUMBER",
       );
     }
 
@@ -65,8 +87,8 @@ class TwilioNotificationService {
 
     if (this.messagingServiceSid) {
       body.set("MessagingServiceSid", this.messagingServiceSid);
-    } else if (this.fromNumber) {
-      body.set("From", this.fromNumber);
+    } else if (senderNumber) {
+      body.set("From", senderNumber);
     }
 
     const response = await fetch(`${TWILIO_API_BASE_URL}/Accounts/${this.accountSid}/Messages.json`, {
@@ -94,6 +116,21 @@ class TwilioNotificationService {
   }
 
   async sendBirthdaySmsBatch(recipients: BirthdayRecipient[]) {
+    if (!this.isSmsEnabled()) {
+      return {
+        total: recipients.length,
+        sent: 0,
+        failed: 0,
+        results: recipients.map((recipient) => ({
+          status: "fulfilled" as const,
+          value: {
+            recipient,
+            result: this.disabledSmsResponse(),
+          },
+        })),
+      };
+    }
+
     const results = await Promise.allSettled(
       recipients.map(async (recipient) => ({
         recipient,
@@ -124,9 +161,14 @@ class TwilioNotificationService {
   }
 
   async sendVerificationCode(to: string, channel: VerificationChannel = "sms") {
-    if (!this.enabled || !this.accountSid || !this.authToken) {
-      console.log(`[sms] skipped verification delivery to ${to}: SMS delivery is disabled or not configured`);
-      return null;
+    if (!this.isSmsEnabled()) {
+      return this.disabledSmsResponse();
+    }
+
+    if (!this.verifyConfigured) {
+      throw new NotificationServiceError(
+        "Twilio Verify is not configured: provide TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SERVICE_SID",
+      );
     }
 
     if (!this.verifyServiceSid) {
@@ -158,9 +200,14 @@ class TwilioNotificationService {
   }
 
   async verifyCode(to: string, code: string) {
-    if (!this.enabled || !this.accountSid || !this.authToken) {
-      console.log(`[sms] skipped verification check for ${to}: SMS delivery is disabled or not configured`);
-      return null;
+    if (!this.isSmsEnabled()) {
+      return this.disabledSmsResponse();
+    }
+
+    if (!this.verifyConfigured) {
+      throw new NotificationServiceError(
+        "Twilio Verify is not configured: provide TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SERVICE_SID",
+      );
     }
 
     if (!this.verifyServiceSid) {
@@ -224,9 +271,25 @@ class TwilioNotificationService {
 
     return "Unknown Twilio error";
   }
+
+  private isSmsEnabled() {
+    return env.SMS_ENABLED === true;
+  }
+
+  private disabledSmsResponse(): DisabledSmsResponse {
+    // SMS disabled pending Twilio compliance verification.
+    return {
+      sid: "sms-disabled",
+      status: "disabled",
+      message: "SMS disabled pending Twilio compliance verification",
+      disabled: true,
+    };
+  }
 }
 
 export const smsNotificationService = new TwilioNotificationService();
+
+export const isSmsDeliveryConfigured = () => smsNotificationService.isConfigured();
 
 export const sendManagerNotificationSms = async (phone: string, certificate: CertificateRecord) => {
   await smsNotificationService.sendSms(

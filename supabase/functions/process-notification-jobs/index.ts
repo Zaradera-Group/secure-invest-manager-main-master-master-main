@@ -3,6 +3,7 @@ import { corsHeaders } from '../_shared/cors.ts'
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000
 const TWILIO_API_BASE_URL = 'https://api.twilio.com/2010-04-01'
+const SMS_ENABLED = (Deno.env.get('SMS_ENABLED') ?? 'false').toLowerCase() === 'true'
 
 type NotificationJob = {
   id: string
@@ -17,6 +18,13 @@ type ReminderRecipient = {
   email: string | null
   phone: string | null
   role: 'investment_manager' | 'super_admin'
+}
+
+type MaturityReminderRecipient = {
+  userId: string
+  email: string | null
+  phone: string | null
+  role: 'investment_manager'
 }
 
 Deno.serve(async (req) => {
@@ -290,6 +298,32 @@ async function processJob(
           deliveredRecipients.push(recipient.email)
         }
 
+        if (job.notification_type === 'payment_reminder' && recipient.phone) {
+          const smsMessage = buildPaymentReminderSms({
+            investorName: readString(payload.investorName),
+            reminderType: readString(payload.reminderType),
+            paymentAmount: readNumber(payload.paymentAmount),
+            nextPaymentDate: readString(payload.nextPaymentDate),
+            maturityDate: readString(payload.maturityDate),
+          })
+
+          try {
+            await sendSmsNotification({
+              supabaseClient,
+              to: recipient.phone,
+              body: smsMessage,
+              userId: recipient.userId,
+              investorId: job.investor_id,
+              notificationType: job.notification_type,
+              recipient: recipient.phone,
+              metadata,
+            })
+            deliveredRecipients.push(recipient.phone)
+          } catch (error) {
+            console.warn(`[process-notification-jobs] payment reminder SMS failed for ${recipient.phone}:`, error)
+          }
+        }
+
         if (job.notification_type === 'maturity_reminder' && recipient.phone) {
           const smsMessage = buildMaturityReminderSms({
             investorName: readString(payload.investorName),
@@ -298,17 +332,21 @@ async function processJob(
             investmentAmount: readNumber(payload.investmentAmount),
           })
 
-          await sendSmsNotification({
-            supabaseClient,
-            to: recipient.phone,
-            body: smsMessage,
-            userId: recipient.userId,
-            investorId: job.investor_id,
-            notificationType: job.notification_type,
-            recipient: recipient.phone,
-            metadata,
-          })
-          deliveredRecipients.push(recipient.phone)
+          try {
+            await sendSmsNotification({
+              supabaseClient,
+              to: recipient.phone,
+              body: smsMessage,
+              userId: recipient.userId,
+              investorId: job.investor_id,
+              notificationType: job.notification_type,
+              recipient: recipient.phone,
+              metadata,
+            })
+            deliveredRecipients.push(recipient.phone)
+          } catch (error) {
+            console.warn(`[process-notification-jobs] maturity reminder SMS failed for ${recipient.phone}:`, error)
+          }
         }
       }
       recipientEmail = deliveredRecipients.join(', ')
@@ -502,7 +540,7 @@ async function resolveReminderRecipients(
 async function resolveMaturityReminderRecipients(
   supabaseClient: ReturnType<typeof createClient>,
   investorId: string,
-): Promise<ReminderRecipient[]> {
+): Promise<MaturityReminderRecipient[]> {
   const { data: roleRows, error: roleError } = await supabaseClient
     .from('user_roles')
     .select('user_id, role')
@@ -571,9 +609,9 @@ async function resolveMaturityReminderRecipients(
         email,
         phone,
         role: row.role,
-      } satisfies ReminderRecipient
+      } satisfies MaturityReminderRecipient
     })
-    .filter((recipient): recipient is ReminderRecipient => recipient !== null)
+    .filter((recipient): recipient is MaturityReminderRecipient => recipient !== null)
 }
 
 function readAuthUserPhone(user: { phone?: string | null; user_metadata?: Record<string, unknown> } | undefined) {
@@ -611,6 +649,19 @@ function buildMaturityReminderSms(data: {
       : `matures in ${data.daysUntilMaturity} day${data.daysUntilMaturity === 1 ? '' : 's'}`
 
   return `Maturity alert: ${data.investorName} ${timingLabel} on ${maturityDateLabel}. Investment amount: N${data.investmentAmount.toLocaleString()}.`
+}
+
+function buildPaymentReminderSms(data: {
+  investorName: string
+  reminderType: string
+  paymentAmount: number
+  nextPaymentDate: string
+  maturityDate: string
+}) {
+  const nextPaymentDateLabel = data.nextPaymentDate ? new Date(data.nextPaymentDate).toLocaleDateString() : 'soon'
+  const maturityDateLabel = data.maturityDate ? new Date(data.maturityDate).toLocaleDateString() : 'maturity date'
+
+  return `Payment reminder: ${data.investorName} has ${data.reminderType.toLowerCase()} due on ${nextPaymentDateLabel}. Amount: N${data.paymentAmount.toLocaleString()}. Maturity date: ${maturityDateLabel}.`
 }
 
 function mapRecipientRoleToNotificationRole(role: ReminderRecipient['role']) {
@@ -683,6 +734,10 @@ async function sendSmsNotification(args: {
   recipient: string
   metadata: Record<string, unknown>
 }) {
+  if (!SMS_ENABLED) {
+    return
+  }
+
   const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID')?.trim()
   const authToken = Deno.env.get('TWILIO_AUTH_TOKEN')?.trim()
   const messagingServiceSid = Deno.env.get('TWILIO_MESSAGING_SERVICE_SID')?.trim()
