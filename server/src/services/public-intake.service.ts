@@ -351,23 +351,23 @@ async function resolveInternalRecipients(args: {
   assigneeEmail: string | null;
 }) {
   const recipients = new Map<string, InternalPublicIntakeRecipient>();
+  const userLookup = await resolveUserLookup();
 
   const assigneeEmail = args.assigneeEmail?.trim().toLowerCase() ?? null;
   if (assigneeEmail) {
-    recipients.set(assigneeEmail, {
+    recipients.set(`manager:${assigneeEmail}`, {
       role: "manager",
       userId: args.assigneeUserId,
       email: assigneeEmail,
     });
   }
 
-  const managerEmails = await resolveEmailsByRoles(["general_manager", "super_admin"]);
-  const userLookup = await resolveUserLookup();
+  const targetEmails = await resolveEmailsByRoles(["investment_manager", "general_manager", "super_admin"]);
 
-  for (const email of managerEmails) {
+  for (const email of targetEmails) {
     const normalizedEmail = email.trim().toLowerCase();
     const user = userLookup.byEmail.get(normalizedEmail);
-    const role = user?.role === "super_admin" ? "ceo" : "general_manager";
+    const role = mapRecipientRole(user?.role);
 
     recipients.set(`${role}:${normalizedEmail}`, {
       role,
@@ -379,7 +379,7 @@ async function resolveInternalRecipients(args: {
   return Array.from(recipients.values());
 }
 
-async function resolveEmailsByRoles(roles: Array<"general_manager" | "super_admin">) {
+async function resolveEmailsByRoles(roles: Array<"investment_manager" | "general_manager" | "super_admin">) {
   const { data: userRoles, error: rolesError } = await adminSupabase
     .from("user_roles")
     .select("user_id, role");
@@ -390,7 +390,7 @@ async function resolveEmailsByRoles(roles: Array<"general_manager" | "super_admi
 
   const targetUserIds = new Set(
     (userRoles ?? [])
-      .filter((row) => roles.includes(row.role as "general_manager" | "super_admin"))
+      .filter((row) => roles.includes(row.role as "investment_manager" | "general_manager" | "super_admin"))
       .map((row) => row.user_id as string),
   );
 
@@ -407,6 +407,19 @@ async function resolveEmailsByRoles(roles: Array<"general_manager" | "super_admi
     .filter((user) => targetUserIds.has(user.id))
     .map((user) => user.email?.trim())
     .filter((email): email is string => !!email);
+}
+
+function mapRecipientRole(role?: string | null): "manager" | "general_manager" | "ceo" {
+  switch (role) {
+    case "investment_manager":
+      return "manager";
+    case "general_manager":
+      return "general_manager";
+    case "super_admin":
+      return "ceo";
+    default:
+      return "manager";
+  }
 }
 
 async function resolveUserLookup() {
