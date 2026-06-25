@@ -238,8 +238,8 @@ async function uploadSignature(
 
   if (error) throw error
 
-  const { data } = await supabaseClient.storage.from(SIGNATURE_BUCKET).createSignedUrl(path, 60 * 60 * 24 * 7)
-  return data.signedUrl
+  // Persist the renderable payload so certificate regeneration does not depend on an expiring signed URL.
+  return signatureDataUrl
 }
 
 async function applyAction(args: {
@@ -312,6 +312,7 @@ async function generateCertificatePdf(args: {
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
   const firstPage = pdfDoc.getPages()[0]
   const { width, height } = firstPage.getSize()
+  const ceoSealBytes = await loadCeoSealBytes()
 
   const investmentAmount = Number(investor.investment_amount ?? 0)
   const calculatedInterest = Number(certificate.calculated_interest_payment ?? 0)
@@ -362,6 +363,7 @@ async function generateCertificatePdf(args: {
   await drawSignatureIfPresent(pdfDoc, firstPage, certificate.general_manager_signature_url as string | null, 300, 120, 'General Manager')
   if (certificate.ceo_approved_at) {
     firstPage.drawText('CEO Approved', { x: 460, y: 135, size: 11, font: bold, color: rgb(0.1, 0.5, 0.2) })
+    await drawCeoSealIfAvailable(pdfDoc, firstPage, ceoSealBytes)
   }
 
   const pdfBytes = await pdfDoc.save()
@@ -393,18 +395,78 @@ async function drawSignatureIfPresent(
     return
   }
 
-  const response = await fetch(signatureUrl)
-  if (!response.ok) {
+  let bytes: Uint8Array | null = null
+  let isPng = false
+
+  if (signatureUrl.startsWith('data:image/')) {
+    const [header, base64] = signatureUrl.split(',', 2)
+    if (!base64) {
+      page.drawText(`${label}: Pending`, { x, y, size: 10, color: rgb(0.5, 0.2, 0.2) })
+      return
+    }
+
+    bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0))
+    isPng = header.includes('image/png')
+  } else {
+    const response = await fetch(signatureUrl)
+    if (!response.ok) {
+      page.drawText(`${label}: Pending`, { x, y, size: 10, color: rgb(0.5, 0.2, 0.2) })
+      return
+    }
+
+    bytes = new Uint8Array(await response.arrayBuffer())
+    const contentType = response.headers.get('content-type') ?? ''
+    isPng = contentType.includes('png') || signatureUrl.toLowerCase().includes('.png')
+  }
+
+  if (!bytes?.length) {
     page.drawText(`${label}: Pending`, { x, y, size: 10, color: rgb(0.5, 0.2, 0.2) })
     return
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  const contentType = response.headers.get('content-type') ?? ''
-  const isPng = contentType.includes('png') || signatureUrl.toLowerCase().includes('.png')
   const image = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
   page.drawImage(image, { x, y, width: 120, height: 40 })
   page.drawText(label, { x, y: y - 12, size: 9, color: rgb(0.2, 0.2, 0.2) })
+}
+
+async function loadCeoSealBytes() {
+  const appUrl = Deno.env.get('PUBLIC_APP_URL')?.trim()
+  if (!appUrl) {
+    return null
+  }
+
+  try {
+    const response = await fetch(new URL('/assets/zaradera-seal.png', appUrl).toString())
+    if (!response.ok) {
+      return null
+    }
+
+    return new Uint8Array(await response.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+async function drawCeoSealIfAvailable(
+  pdfDoc: PDFDocument,
+  page: ReturnType<PDFDocument['getPages']>[number],
+  sealBytes: Uint8Array | null,
+) {
+  if (!sealBytes) {
+    return
+  }
+
+  try {
+    const seal = await pdfDoc.embedPng(sealBytes)
+    page.drawImage(seal, {
+      x: 444,
+      y: 94,
+      width: 92,
+      height: 92,
+    })
+  } catch {
+    // Leave the CEO seal area empty if the image cannot be decoded.
+  }
 }
 
 async function updateGeneratedCertificate(

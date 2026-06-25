@@ -432,11 +432,14 @@ export const generateCertificatePdf = async (
   const signatureHeight = 28;
   const signatoryNameY = 84;
   const signatoryTitleY = 70;
-  const isInvestmentManagerCreatedCertificate = options?.creatorRole === "investment_manager";
-  const shouldShowCeoSeal = isInvestmentManagerCreatedCertificate && (
-    certificate.status === "approved"
-    || certificate.status === "sent"
-    || Boolean(certificate.ceo_approved_by || certificate.sent_by)
+  const shouldShowCeoSeal = Boolean(
+    certificate.ceo_signature
+      || certificate.ceo_approved_by
+      || certificate.approved_at
+      || certificate.sent_by
+      || certificate.sent_at
+      || certificate.status === "approved"
+      || certificate.status === "sent",
   );
 
   page.drawText("Certificate of Investment", {
@@ -561,9 +564,9 @@ export const generateCertificatePdf = async (
       name: signatories.ceo,
       title: "CEO",
       centerX: 485,
-      signature: certificate.ceo_signature,
-      showIdentity: !isInvestmentManagerCreatedCertificate,
-      showSignature: !isInvestmentManagerCreatedCertificate,
+      signature: null,
+      showIdentity: true,
+      showSignature: false,
       showSeal: shouldShowCeoSeal,
     },
   ] as const;
@@ -595,10 +598,6 @@ export const generateCertificatePdf = async (
 
   await drawSignature(pdfDoc, page, certificate.manager_signature, 54, signatureY, signatureWidth, signatureHeight);
   await drawSignature(pdfDoc, page, certificate.general_manager_signature, 241.5, signatureY, signatureWidth, signatureHeight);
-
-  if (!isInvestmentManagerCreatedCertificate) {
-    await drawSignature(pdfDoc, page, certificate.ceo_signature, 429, signatureY, signatureWidth, signatureHeight);
-  }
 
   if (shouldShowCeoSeal) {
     await drawSeal(pdfDoc, page, sealBytes, {

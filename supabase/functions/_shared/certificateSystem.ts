@@ -7,10 +7,12 @@ export type WorkflowRole = 'investment_manager' | 'general_manager' | 'super_adm
 
 export type CertificateRecord = {
   id: string
+  investor_id?: string | null
   investor_name: string
   investor_email: string
   amount: number
   interest_rate: number
+  issue_date?: string | null
   status: CertificateStatus
   manager_signature: string | null
   general_manager_signature: string | null
@@ -340,16 +342,44 @@ export async function getCertificateById(
   return data as CertificateRecord
 }
 
+async function getFreshInvestorSnapshot(
+  serviceClient: ReturnType<typeof createClient>,
+  certificate: CertificateRecord,
+) {
+  let query = serviceClient
+    .from('investors')
+    .select('name, email, investment_amount, percentage, currency_code')
+
+  if (certificate.investor_id) {
+    query = query.eq('id', certificate.investor_id)
+  } else {
+    query = query
+      .eq('email', certificate.investor_email.trim().toLowerCase())
+      .eq('name', certificate.investor_name)
+  }
+
+  const { data, error } = await query.maybeSingle()
+  if (error) throw error
+
+  return {
+    investorName: String(data?.name ?? certificate.investor_name),
+    investorEmail: String(data?.email ?? certificate.investor_email),
+    amount: Number(data?.investment_amount ?? certificate.amount ?? 0),
+    interestRate: Number(data?.percentage ?? certificate.interest_rate ?? 0),
+  }
+}
+
 async function regenerateAndPersistCertificate(
   serviceClient: ReturnType<typeof createClient>,
   certificate: CertificateRecord,
 ) {
+  const freshInvestor = await getFreshInvestorSnapshot(serviceClient, certificate)
   const pdfBytes = await buildCertificatePdf({
-    investorName: certificate.investor_name,
-    investorEmail: certificate.investor_email,
-    amount: Number(certificate.amount),
-    interestRate: Number(certificate.interest_rate),
-    issueDate: certificate.created_at,
+    investorName: freshInvestor.investorName,
+    investorEmail: freshInvestor.investorEmail,
+    amount: freshInvestor.amount,
+    interestRate: freshInvestor.interestRate,
+    issueDate: certificate.issue_date ?? certificate.approved_at ?? certificate.created_at,
     statusLabel: humanizeStatus(certificate.status),
     managerSignature: certificate.manager_signature,
     generalManagerSignature: certificate.general_manager_signature,
@@ -524,15 +554,8 @@ async function normalizeSignature(
 
   if (error) throw error
 
-  const { data, error: signedUrlError } = await serviceClient.storage
-    .from('certificate-signatures')
-    .createSignedUrl(path, 60 * 60 * 24 * 365)
-
-  if (signedUrlError || !data?.signedUrl) {
-    throw signedUrlError ?? new Error('Failed to create signed signature URL.')
-  }
-
-  return data.signedUrl
+  // Persist the renderable signature payload so PDF regeneration does not depend on an expiring signed URL.
+  return normalized
 }
 
 function validateCreateInput(input: CreateCertificateInput) {

@@ -30,6 +30,8 @@ export interface CertificateRecord {
   manager_reviewed_by: string | null;
   general_manager_reviewed_by: string | null;
   ceo_approved_by: string | null;
+  approved_at?: string | null;
+  sent_at?: string | null;
   sent_by: string | null;
   created_at: string;
   updated_at: string;
