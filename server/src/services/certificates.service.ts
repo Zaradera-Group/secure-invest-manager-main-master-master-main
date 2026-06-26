@@ -15,6 +15,11 @@ import {
 } from "../lib/sms.js";
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
+import {
+  buildTransactionCertificateInput,
+  shouldCreateTransactionCertificate,
+  type InvestorInvestmentSnapshot,
+} from "./pipelines/certificateTransactionPipeline.js";
 import type {
   AppRole,
   AuthenticatedUser,
@@ -127,77 +132,6 @@ const normalizeReferenceNumber = (value: unknown) => {
 };
 
 const getTodayIsoDate = () => new Date().toISOString().split("T")[0];
-
-const hasInvestmentChanged = (
-  before: {
-    investment_amount: number;
-    tenure: number | null;
-    percentage: number;
-    investment_type: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
-    investor_category?: string | null;
-    start_date: string;
-    maturity_date: string | null;
-    currency_code: string | null;
-    client_account_number: string;
-    client_bank: string;
-    expected_maturity_amount: number;
-    category_reference_name?: string | null;
-    category_reference_email?: string | null;
-    category_notes?: string | null;
-  },
-  after: {
-    investment_amount?: number;
-    tenure?: number | null;
-    percentage?: number;
-    investment_type?: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
-    investor_category?: string | null;
-    start_date?: string;
-    maturity_date?: string | null;
-    currency_code?: string | null;
-    client_account_number?: string;
-    client_bank?: string;
-    expected_maturity_amount?: number;
-    category_reference_name?: string | null;
-    category_reference_email?: string | null;
-    category_notes?: string | null;
-  },
-) => {
-  const beforeEntry = [
-    Number(before.investment_amount ?? 0),
-    before.tenure ?? null,
-    Number(before.percentage ?? 0),
-    before.investment_type ?? null,
-    before.investor_category ?? null,
-    before.start_date,
-    before.maturity_date ?? null,
-    (before.currency_code ?? "NGN").toUpperCase(),
-    before.client_account_number,
-    before.client_bank,
-    Number(before.expected_maturity_amount ?? 0),
-    before.category_reference_name ?? null,
-    before.category_reference_email ?? null,
-    before.category_notes ?? null,
-  ];
-
-  const afterEntry = [
-    Number(after.investment_amount ?? before.investment_amount ?? 0),
-    after.tenure ?? before.tenure ?? null,
-    Number(after.percentage ?? before.percentage ?? 0),
-    after.investment_type ?? before.investment_type ?? null,
-    after.investor_category ?? before.investor_category ?? null,
-    after.start_date ?? before.start_date,
-    after.maturity_date ?? before.maturity_date ?? null,
-    (after.currency_code ?? before.currency_code ?? "NGN").toUpperCase(),
-    after.client_account_number ?? before.client_account_number,
-    after.client_bank ?? before.client_bank,
-    Number(after.expected_maturity_amount ?? before.expected_maturity_amount ?? 0),
-    after.category_reference_name ?? before.category_reference_name ?? null,
-    after.category_reference_email ?? before.category_reference_email ?? null,
-    after.category_notes ?? before.category_notes ?? null,
-  ];
-
-  return beforeEntry.some((value, index) => afterEntry[index] !== value);
-};
 
 const parseTenureMonths = (investmentTenure?: string) => {
   if (!investmentTenure) {
@@ -468,11 +402,37 @@ export class CertificatesService {
       throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
     }
 
-    const issueDate = hasInvestmentChanged(investorBeforeUpdate, input)
+    const shouldCreateTransactionCertificateFlag = shouldCreateTransactionCertificate(investorBeforeUpdate, input);
+    const issueDate = shouldCreateTransactionCertificateFlag
       ? getTodayIsoDate()
       : existingCertificate?.issue_date ?? getTodayIsoDate();
 
-    const refreshedCertificate = await this.refreshCertificateForInvestor(actor, investorId, { issueDate });
+    const investmentType = data.investment_type ?? undefined;
+    const transactionPayload = buildTransactionCertificateInput({
+      investorId,
+      investorName: data.name,
+      investorEmail: data.email,
+      investorPhone: data.phone,
+      investorReferenceNumber: normalizeReferenceNumber(data.reference_number),
+      amount: Number(data.investment_amount ?? 0),
+      currencyCode: data.currency_code ?? "NGN",
+      interestRate: Number(data.percentage ?? 0),
+      investmentType,
+      issueDate,
+      investmentTenure: data.tenure ? `${data.tenure} months` : undefined,
+      principalMaturityDate: data.maturity_date ?? undefined,
+      interestPayment: this.buildInterestPaymentFromSnapshot(
+        Number(data.investment_amount ?? 0),
+        Number(data.percentage ?? 0),
+        data.tenure ? `${data.tenure} months` : undefined,
+        investmentType ?? undefined,
+        existingCertificate?.interest_payment ?? null,
+      ),
+    });
+
+    const refreshedCertificate = shouldCreateTransactionCertificateFlag
+      ? await this.createCertificateFromSnapshot(actor, transactionPayload)
+      : await this.refreshCertificateForInvestor(actor, investorId, { issueDate });
 
     await insertAuditLog({
       action: "certificate_refreshed_after_investor_update",
@@ -492,11 +452,32 @@ export class CertificatesService {
   }
 
   async createCertificate(actor: AuthenticatedUser, payload: unknown) {
+    const input = createCertificateSchema.parse(payload);
+    return this.createCertificateFromSnapshot(actor, input);
+  }
+
+  private async createCertificateFromSnapshot(
+    actor: AuthenticatedUser,
+    input: {
+      investorId?: string;
+      investorName: string;
+      investorEmail: string;
+      investorPhone?: string | null;
+      investorReferenceNumber?: number | null;
+      amount: number;
+      currencyCode: string;
+      interestRate: number;
+      investmentType?: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
+      issueDate?: string;
+      investmentTenure?: string;
+      principalMaturityDate?: string | null;
+      interestPayment?: string | null;
+    },
+  ) {
     if (actor.role === "general_manager") {
       throw new Error("General Managers cannot create certificates right now.");
     }
 
-    const input = createCertificateSchema.parse(payload);
     const issueDate = input.issueDate ?? getTodayIsoDate();
     const calculatedInterestPayment = calculateInterestPayment(
       input.amount,
@@ -508,7 +489,7 @@ export class CertificatesService {
         input.amount,
         input.interestRate,
         input.investmentTenure,
-        input.investmentType,
+        input.investmentType ?? undefined,
       );
     const initialStatus: CertificateStatus =
       actor.role === "admin"
