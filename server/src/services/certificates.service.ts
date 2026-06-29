@@ -1069,6 +1069,13 @@ export class CertificatesService {
     const signatories = await this.getSignatoryNames();
     const investorSnapshot = await this.getInvestorSnapshot(certificate, investorContext);
     const creatorRole = await this.getRoleForUser(certificate.created_by);
+    const managerSignature = await this.getRenderableSignature(certificate.manager_signature, certificate.id, "manager");
+    const generalManagerSignature = await this.getRenderableSignature(
+      certificate.general_manager_signature,
+      certificate.id,
+      "general-manager",
+    );
+    const ceoSignature = await this.getRenderableSignature(certificate.ceo_signature, certificate.id, "ceo");
     const pdfBytes = await generateCertificatePdf(
       {
         ...certificate,
@@ -1082,6 +1089,9 @@ export class CertificatesService {
         principal_maturity_date: investorSnapshot.principalMaturityDate,
         interest_payment: investorSnapshot.interestPayment ?? certificate.interest_payment,
         investor_reference_number: investorSnapshot.referenceNumber,
+        manager_signature: managerSignature,
+        general_manager_signature: generalManagerSignature,
+        ceo_signature: ceoSignature,
       },
       signatories,
       {
@@ -1091,6 +1101,56 @@ export class CertificatesService {
     const certificateUrl = await uploadCertificatePdf(certificate.id, pdfBytes);
 
     return this.updateCertificate(certificate.id, { certificate_url: certificateUrl });
+  }
+
+  private async getRenderableSignature(
+    signature: string | null,
+    certificateId: string,
+    role: "manager" | "general-manager" | "ceo",
+  ) {
+    if (!signature) {
+      return null;
+    }
+
+    if (signature.startsWith("http://") || signature.startsWith("https://")) {
+      return signature;
+    }
+
+    if (!signature.startsWith("data:image/")) {
+      return null;
+    }
+
+    const [header, base64] = signature.split(",", 2);
+    if (!base64 || !header.startsWith("data:image/")) {
+      return null;
+    }
+
+    const contentType = header.substring(5, header.indexOf(";"));
+    const extension = contentType.includes("png") ? "png" : "jpg";
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const filePath = `signature-cache/${role}/${certificateId}-${Date.now()}.${extension}`;
+
+    const { error } = await adminSupabase.storage
+      .from(env.CERTIFICATE_STORAGE_BUCKET)
+      .upload(filePath, bytes, {
+        contentType,
+        upsert: true,
+      });
+
+    if (error) {
+      console.warn("Failed to cache certificate signature for PDF rendering", {
+        certificateId,
+        role,
+        message: error.message,
+      });
+      return signature;
+    }
+
+    const { data } = await adminSupabase.storage
+      .from(env.CERTIFICATE_STORAGE_BUCKET)
+      .createSignedUrl(filePath, 60 * 60 * 24 * 7);
+
+    return data?.signedUrl ?? signature;
   }
 
   private async getInvestorSnapshot(

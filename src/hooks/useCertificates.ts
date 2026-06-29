@@ -196,6 +196,9 @@ export function useManageInvestorCertificate() {
         (typeof (data as { id?: unknown } | null)?.id === 'string'
           ? (data as { id: string }).id
           : null)
+        ?? (typeof (data as { data?: { id?: unknown } } | null)?.data?.id === 'string'
+          ? (data as { data: { id: string } }).data.id
+          : null)
         ?? payload.certificateId
         ?? null;
 
