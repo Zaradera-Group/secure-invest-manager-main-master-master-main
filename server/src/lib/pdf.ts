@@ -541,6 +541,15 @@ export const generateCertificatePdf = async (
     font,
   });
 
+  if (shouldShowCeoSeal) {
+    await drawSeal(pdfDoc, page, sealBytes, {
+      centerX: 485,
+      centerY: 116,
+      width: 92,
+      height: 92,
+    });
+  }
+
   const signatoryColumns = [
     {
       name: signatories.investmentManager,
@@ -598,15 +607,6 @@ export const generateCertificatePdf = async (
 
   await drawSignature(pdfDoc, page, certificate.manager_signature, 54, signatureY, signatureWidth, signatureHeight);
   await drawSignature(pdfDoc, page, certificate.general_manager_signature, 241.5, signatureY, signatureWidth, signatureHeight);
-
-  if (shouldShowCeoSeal) {
-    await drawSeal(pdfDoc, page, sealBytes, {
-      centerX: 485,
-      centerY: 116,
-      width: 92,
-      height: 92,
-    });
-  }
 
   return pdfDoc.save();
 };

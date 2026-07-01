@@ -260,10 +260,36 @@ export async function getCertificateSignedDownloadUrl(certificateId: string) {
 }
 
 export async function getCertificatePreviewUrl(certificateId: string) {
-  console.info('[certificates.view] Requesting preview URL', { certificateId });
-  const signedUrl = await getCertificateSignedDownloadUrl(certificateId);
-  console.info('[certificates.view] Preview URL ready', { certificateId });
-  return signedUrl;
+  console.info('[certificates.view] Requesting preview PDF file', { certificateId });
+  const accessToken = await getActiveAccessToken();
+
+  if (!accessToken) {
+    console.error('[certificates.view] No access token available for preview PDF file', { certificateId });
+    throw new Error('Failed to load session. Please sign in again.');
+  }
+
+  const response = await fetch(`${CERTIFICATE_API_URL}/certificates/${certificateId}/file`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const raw = await response.text();
+    const data = parseJsonSafely(raw) as { message?: string; error?: string } | null;
+    console.error('[certificates.view] Preview PDF file request failed', {
+      certificateId,
+      status: response.status,
+      data,
+    });
+    throw new Error(data?.error ?? data?.message ?? 'Failed to open certificate');
+  }
+
+  const blob = await response.blob();
+  const previewUrl = URL.createObjectURL(blob);
+  console.info('[certificates.view] Preview PDF file ready', { certificateId });
+  return previewUrl;
 }
 
 export async function openCertificatePreviewInNewTab(certificateId: string) {

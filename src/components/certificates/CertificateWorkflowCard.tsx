@@ -112,9 +112,9 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
     if (isExecutiveRole(role) && certificate?.status === 'pending_ceo') {
       actions.push({
         action: 'approve_ceo',
-        label: isDirectCeoFlow ? 'Sign and Send to Investor' : 'Review and Approve Certificate',
+        label: isDirectCeoFlow ? 'Approve and Send to Investor' : 'Review and Approve Certificate',
         icon: CheckCircle2,
-        requiresSignature: isDirectCeoFlow,
+        requiresSignature: false,
       });
     }
 
@@ -158,8 +158,8 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
 
     if (isExecutiveRole(role) && certificate.status === 'pending_ceo') {
       return isDirectCeoFlow
-        ? 'Add the CEO signature and send the certificate directly to the investor.'
-        : 'Review the certificate and approve it so it returns to the Investment Manager for final sending.';
+        ? 'Approve this certificate and send it directly to the investor.'
+        : 'Approve this certificate so it returns to the Investment Manager for final sending.';
     }
 
     if (role === 'investment_manager' && certificate.status === 'approved') {
@@ -244,7 +244,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
 
   const needsSignature = dialogAction === 'approve_investment_manager'
     || dialogAction === 'approve_general_manager';
-  const requiresCeoSignature = dialogAction === 'approve_ceo' && isDirectCeoFlow;
+  const requiresCeoSignature = false;
   const requiresSignature = needsSignature || requiresCeoSignature;
   const openLatestCertificate = async () => {
     const certificateIdToOpen = latestCertificateId ?? certificate?.id ?? null;
@@ -543,8 +543,8 @@ function getDialogDescription(dialogAction: CertificateAction | null, isDirectCe
 
   if (dialogAction === 'approve_ceo') {
     return isDirectCeoFlow
-      ? 'Add the CEO signature and send this certificate directly to the investor.'
-      : 'Review the certificate and approve it so it returns to the originating owner for final sending.';
+      ? 'Approve this certificate and send it directly to the investor.'
+      : 'Approve this certificate so it returns to the originating owner for final sending.';
   }
 
   return 'Add the required signature and continue the workflow.';

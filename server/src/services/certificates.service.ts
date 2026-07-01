@@ -629,10 +629,6 @@ export class CertificatesService {
 
     const isDirectCeoFlow = certificate.created_by === actor.id;
 
-    if (isDirectCeoFlow && !input.signature) {
-      throw new Error("CEO signature is required before sending this certificate to the investor");
-    }
-
     const approvedCertificate = await this.updateCertificate(certificateId, {
       ceo_signature: input.signature ?? certificate.ceo_signature,
       ceo_approved_by: actor.id,
@@ -739,12 +735,13 @@ export class CertificatesService {
       throw new Error("Only the originating General Manager can send this certificate.");
     }
 
-    const signedCertificateLink = await this.createInvestorCertificateEmailLink(certificate);
-    await sendInvestorCertificateEmail(certificate.investor_email, certificate, signedCertificateLink);
-    const investorPhone = certificate.investor_phone?.trim();
+    const refreshedCertificate = await this.persistPdf(certificate);
+    const signedCertificateLink = await this.createInvestorCertificateEmailLink(refreshedCertificate);
+    await sendInvestorCertificateEmail(refreshedCertificate.investor_email, refreshedCertificate, signedCertificateLink);
+    const investorPhone = refreshedCertificate.investor_phone?.trim();
     if (investorPhone) {
       await this.sendSmsSafely("investor certificate", () =>
-        sendInvestorCertificateSms(investorPhone, certificate, signedCertificateLink)
+        sendInvestorCertificateSms(investorPhone, refreshedCertificate, signedCertificateLink)
       );
     }
     const sentCertificate = await this.updateCertificate(certificateId, {
@@ -755,8 +752,8 @@ export class CertificatesService {
 
     await this.insertNotification({
       certificateId,
-      message: `Your certificate for ${certificate.investor_name} is ready.`,
-      recipientEmail: certificate.investor_email,
+      message: `Your certificate for ${refreshedCertificate.investor_name} is ready.`,
+      recipientEmail: refreshedCertificate.investor_email,
       userRole: "investor",
     });
 
@@ -766,7 +763,7 @@ export class CertificatesService {
       actorEmail: actor.email,
       actorRole: actor.role,
       certificateId,
-      targetEmail: certificate.investor_email,
+      targetEmail: refreshedCertificate.investor_email,
       metadata: {
         directCeoFlow: false,
       },
@@ -904,10 +901,6 @@ export class CertificatesService {
   }
 
   private async ensureCertificateFile(certificate: CertificateRecord) {
-    if (certificate.certificate_url) {
-      return certificate;
-    }
-
     return this.persistPdf(certificate);
   }
 
