@@ -1189,12 +1189,16 @@ export class CertificatesService {
       .from("investors")
       .select("name, email, phone, reference_number, investment_amount, currency_code, percentage, tenure, maturity_date, investment_type");
 
-    if (investorContext?.investorId) {
-      query = query.eq("id", investorContext.investorId);
+    const investorId = investorContext?.investorId ?? certificate.investor_id ?? null;
+
+    if (investorId) {
+      query = query.eq("id", investorId);
     } else {
       query = query
         .eq("email", certificate.investor_email)
-        .eq("name", certificate.investor_name);
+        .eq("name", certificate.investor_name)
+        .order("updated_at", { ascending: false })
+        .limit(1);
     }
 
     const { data, error } = await query.maybeSingle();
