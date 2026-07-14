@@ -20,6 +20,7 @@ type PublicIntakeRequest = {
   submitted_by_name: string;
   email: string;
   phone: string;
+  date_of_birth?: string | null;
   investment_amount: number;
   start_date: string;
   maturity_date: string;
@@ -234,8 +235,14 @@ export default function PublicIntakeInbox() {
                     <Info label="Type" value={request.investment_type} />
                     <Info label="Bank" value={request.client_bank} />
                     <Info label="Account" value={request.client_account_number} />
+                    <Info label="Currency" value={request.currency_code ?? 'NGN'} />
+                    <Info label="Tenure" value={`${request.tenure} month(s)`} />
+                    <Info label="Rate" value={request.percentage == null ? 'Not provided' : `${Number(request.percentage).toFixed(2)}%`} />
+                    <Info label="Date of Birth" value={request.date_of_birth ? formatDate(request.date_of_birth) : 'Not provided'} />
                     <Info label="Gender" value={request.gender ?? 'Not provided'} />
                     <Info label="Address" value={request.address ?? 'Not provided'} />
+                    <Info label="Occupation" value={request.occupation ?? 'Not provided'} />
+                    <Info label="Source of Funds" value={request.source_of_funds ?? 'Not provided'} />
                     <Info label="Start Date" value={formatDate(request.start_date)} />
                     <Info label="Maturity" value={formatDate(request.maturity_date)} />
                   </div>
@@ -361,12 +368,26 @@ async function copyIntake(request: PublicIntakeRequest, toast: ReturnType<typeof
     `Name: ${request.submitted_by_name}`,
     `Email: ${request.email}`,
     `Phone: ${request.phone}`,
+    `Date of Birth: ${request.date_of_birth ?? 'Not provided'}`,
+    `Gender: ${request.gender ?? 'Not provided'}`,
+    `Address: ${request.address ?? 'Not provided'}`,
+    `Occupation: ${request.occupation ?? 'Not provided'}`,
+    `Source of Funds: ${request.source_of_funds ?? 'Not provided'}`,
     `Amount: ${formatMoney(request.investment_amount, request.currency_code)}`,
+    `Currency: ${request.currency_code ?? 'NGN'}`,
     `Investment Type: ${request.investment_type}`,
+    `Tenure: ${request.tenure} month(s)`,
+    `Rate: ${request.percentage == null ? 'Not provided' : `${Number(request.percentage).toFixed(2)}%`}`,
     `Start Date: ${request.start_date}`,
     `Maturity Date: ${request.maturity_date}`,
     `Client Bank: ${request.client_bank}`,
     `Account Number: ${request.client_account_number}`,
+    `Next of Kin: ${request.next_of_kin_name ?? 'Not provided'}`,
+    `Next of Kin Phone: ${request.next_of_kin_phone ?? 'Not provided'}`,
+    `Next of Kin Relationship: ${request.next_of_kin_relationship ?? 'Not provided'}`,
+    `Reference Name: ${request.category_reference_name ?? 'None'}`,
+    `Reference Email: ${request.category_reference_email ?? 'None'}`,
+    `Category Notes: ${request.category_notes ?? 'None'}`,
     `Status: ${request.status}`,
   ].join('\n');
 

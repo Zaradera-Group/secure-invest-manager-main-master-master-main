@@ -431,7 +431,9 @@ export class CertificatesService {
     });
 
     const refreshedCertificate = shouldCreateTransactionCertificateFlag
-      ? await this.createCertificateFromSnapshot(actor, transactionPayload)
+      ? await this.createCertificateFromSnapshot(actor, transactionPayload, {
+          forceFullApprovalWorkflow: true,
+        })
       : await this.refreshCertificateForInvestor(actor, investorId, { issueDate });
 
     await insertAuditLog({
@@ -473,6 +475,9 @@ export class CertificatesService {
       principalMaturityDate?: string | null;
       interestPayment?: string | null;
     },
+    options: {
+      forceFullApprovalWorkflow?: boolean;
+    } = {},
   ) {
     if (actor.role === "general_manager") {
       throw new Error("General Managers cannot create certificates right now.");
@@ -492,11 +497,14 @@ export class CertificatesService {
         input.investmentType ?? undefined,
       );
     const initialStatus: CertificateStatus =
-      actor.role === "admin"
+      options.forceFullApprovalWorkflow
+        ? "pending_manager"
+        : actor.role === "admin"
         ? "approved"
         : actor.role === "super_admin"
           ? "pending_ceo"
           : "pending_manager";
+    const isAdminAutoApproved = !options.forceFullApprovalWorkflow && actor.role === "admin";
 
     const { data, error } = await adminSupabase
       .from("certificates")
@@ -512,8 +520,8 @@ export class CertificatesService {
         investment_tenure: input.investmentTenure ?? null,
         principal_maturity_date: input.principalMaturityDate ?? null,
         interest_payment: interestPaymentDescription,
-        approved_at: actor.role === "admin" ? new Date().toISOString() : null,
-        ceo_approved_by: actor.role === "admin" ? actor.id : null,
+        approved_at: isAdminAutoApproved ? new Date().toISOString() : null,
+        ceo_approved_by: isAdminAutoApproved ? actor.id : null,
         status: initialStatus,
         created_by: actor.id,
       })
@@ -544,6 +552,7 @@ export class CertificatesService {
         initialStatus,
         investmentType: input.investmentType ?? null,
         calculatedInterestPayment,
+        forceFullApprovalWorkflow: options.forceFullApprovalWorkflow === true,
       },
     });
 
@@ -775,6 +784,7 @@ export class CertificatesService {
   async createDownloadUrl(certificateId: string, actor: AuthenticatedUser) {
     let certificate = await this.getCertificate(certificateId);
     await this.assertCertificateAccess(certificate, actor);
+    this.assertCertificateRenderable(certificate);
 
     certificate = await this.ensureCertificateFile(certificate);
 
@@ -820,6 +830,7 @@ export class CertificatesService {
   async getCertificatePdfFile(certificateId: string, actor: AuthenticatedUser) {
     let certificate = await this.getCertificate(certificateId);
     await this.assertCertificateAccess(certificate, actor);
+    this.assertCertificateRenderable(certificate);
 
     certificate = await this.ensureCertificateFile(certificate);
 
@@ -902,6 +913,27 @@ export class CertificatesService {
 
   private async ensureCertificateFile(certificate: CertificateRecord) {
     return this.persistPdf(certificate);
+  }
+
+  private assertCertificateRenderable(certificate: CertificateRecord) {
+    const missing: string[] = [];
+
+    if (certificate.status === "pending_general_manager") {
+      if (!certificate.manager_signature) missing.push("Investment Manager signature");
+    } else if (certificate.status === "pending_ceo") {
+      if (!certificate.manager_signature) missing.push("Investment Manager signature");
+      if (!certificate.general_manager_signature) missing.push("General Manager signature");
+    } else if (certificate.status === "approved" || certificate.status === "sent") {
+      if (!certificate.manager_signature) missing.push("Investment Manager signature");
+      if (!certificate.general_manager_signature) missing.push("General Manager signature");
+      if (!certificate.ceo_approved_by && !certificate.approved_at) missing.push("CEO approval");
+    }
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Certificate is not ready to view. Missing required workflow step(s): ${missing.join(", ")}.`,
+      );
+    }
   }
 
   private async notifyStageUsers(

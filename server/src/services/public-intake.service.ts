@@ -501,6 +501,13 @@ function buildPublicIntakeNotificationPayload(args: {
   const relationship = args.investor.nextOfKinRelationship?.trim() || "Not provided";
   const address = args.investor.address?.trim() || "Not provided";
   const gender = args.investor.gender ?? "Not provided";
+  const dateOfBirth = args.investor.dateOfBirth?.trim() || "Not provided";
+  const occupation = args.investor.occupation?.trim() || "Not provided";
+  const sourceOfFunds = args.investor.sourceOfFunds?.trim() || "Not provided";
+  const currencyCode = args.investor.currencyCode?.trim().toUpperCase() || "NGN";
+  const percentage = args.investor.percentage == null ? "Not provided" : `${Number(args.investor.percentage).toFixed(2)}%`;
+  const bankName = args.investor.clientBank.trim();
+  const accountNumber = args.investor.clientAccountNumber.trim();
 
   const lines = [
     "Zaraderavest form received",
@@ -509,11 +516,20 @@ function buildPublicIntakeNotificationPayload(args: {
     `Email: ${args.investor.email.trim().toLowerCase()}`,
     `Phone: ${args.investor.phone.trim()}`,
     `Verified OTP: ${args.investor.verifiedOtpCode?.trim() || "Not provided"}`,
+    `Date of Birth: ${dateOfBirth}`,
     `Address: ${address}`,
     `Gender: ${gender}`,
+    `Occupation: ${occupation}`,
+    `Source of Funds: ${sourceOfFunds}`,
     `Next of Kin: ${args.investor.nextOfKinName?.trim() || "Not provided"} (${relationship})`,
+    `Next of Kin Phone: ${args.investor.nextOfKinPhone?.trim() || "Not provided"}`,
     `Amount: ${args.investor.investmentAmount.toLocaleString()}`,
+    `Currency: ${currencyCode}`,
     `Type: ${args.investor.investmentType}`,
+    `Tenure: ${args.investor.tenure} month(s)`,
+    `Rate: ${percentage}`,
+    `Bank: ${bankName}`,
+    `Account Number: ${accountNumber}`,
     `Maturity Date: ${args.maturityDate}`,
     `Submitted Date: ${formatDisplayDate(args.submittedAt)}`,
     "",
@@ -536,6 +552,13 @@ function buildPublicIntakeInternalEmailHtml(args: {
   const relationship = args.investor.nextOfKinRelationship?.trim() || "Not provided";
   const address = args.investor.address?.trim() || "Not provided";
   const gender = args.investor.gender ?? "Not provided";
+  const dateOfBirth = args.investor.dateOfBirth?.trim() || "Not provided";
+  const occupation = args.investor.occupation?.trim() || "Not provided";
+  const sourceOfFunds = args.investor.sourceOfFunds?.trim() || "Not provided";
+  const currencyCode = args.investor.currencyCode?.trim().toUpperCase() || "NGN";
+  const percentage = args.investor.percentage == null ? "Not provided" : `${Number(args.investor.percentage).toFixed(2)}%`;
+  const bankName = args.investor.clientBank.trim();
+  const accountNumber = args.investor.clientAccountNumber.trim();
 
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
@@ -545,10 +568,17 @@ function buildPublicIntakeInternalEmailHtml(args: {
       <p><strong>Email:</strong> ${escapeHtml(args.investor.email)}</p>
       <p><strong>Phone:</strong> ${escapeHtml(args.investor.phone)}</p>
       <p><strong>Verified OTP:</strong> ${escapeHtml(args.investor.verifiedOtpCode?.trim() || "Not provided")}</p>
+      <p><strong>Date of Birth:</strong> ${escapeHtml(dateOfBirth)}</p>
       <p><strong>Address:</strong> ${escapeHtml(address)}</p>
       <p><strong>Gender:</strong> ${escapeHtml(gender)}</p>
+      <p><strong>Occupation:</strong> ${escapeHtml(occupation)}</p>
+      <p><strong>Source of Funds:</strong> ${escapeHtml(sourceOfFunds)}</p>
       <p><strong>Amount:</strong> ${args.investor.investmentAmount.toLocaleString()}</p>
+      <p><strong>Currency:</strong> ${escapeHtml(currencyCode)}</p>
       <p><strong>Type:</strong> ${escapeHtml(args.investor.investmentType)}</p>
+      <p><strong>Tenure:</strong> ${escapeHtml(String(args.investor.tenure))} month(s)</p>
+      <p><strong>Rate:</strong> ${escapeHtml(percentage)}</p>
+      <p><strong>Bank Details:</strong> ${escapeHtml(bankName)} - ${escapeHtml(accountNumber)}</p>
       <p><strong>Next of Kin:</strong> ${escapeHtml(args.investor.nextOfKinName?.trim() || "Not provided")}</p>
       <p><strong>Next of Kin Relationship:</strong> ${escapeHtml(relationship)}</p>
       <p><strong>Next of Kin Phone:</strong> ${escapeHtml(args.investor.nextOfKinPhone?.trim() || "Not provided")}</p>

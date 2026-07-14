@@ -33,7 +33,9 @@ const handleError = (response: Response, error: unknown) => {
         ? 401
         : message.includes("not found")
           ? 404
-          : message.includes("Validation")
+          : message.startsWith("Certificate is not ready")
+            ? 409
+            : message.includes("Validation")
             ? 400
             : 500;
 
