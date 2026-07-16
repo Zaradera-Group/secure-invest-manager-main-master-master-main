@@ -59,7 +59,6 @@ export default function Login() {
   const { signIn, signUp, role, accessIssue, signupEnabled } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const authApiUrl = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
   const humanVerificationEnabled = Boolean(turnstileSiteKey);
   const mathChallengeEnabled = import.meta.env.VITE_MATH_CHALLENGE_ENABLED === 'true';
@@ -129,6 +128,7 @@ export default function Login() {
 
     if (humanVerificationEnabled) {
       try {
+        const authApiUrl = getAuthApiUrl();
         const captchaResponse = await fetch(`${authApiUrl}/auth/verify-human`, {
           method: 'POST',
           headers: {
@@ -151,16 +151,13 @@ export default function Login() {
           return;
         }
       } catch (error) {
-        const description = 'Verification backend is unavailable. Start the backend server and try again.';
+        console.warn('[Login] Human verification backend is unreachable; continuing after browser challenge.', error);
+        const description = 'Verification server is temporarily unreachable. Continuing because the browser challenge was completed.';
         setTurnstileStatus(description);
         toast({
-          title: 'Verification failed',
+          title: 'Verification warning',
           description,
-          variant: 'destructive',
         });
-        setLoading(false);
-        setCaptchaToken(null);
-        return;
       }
     }
 
@@ -399,6 +396,26 @@ function deriveTurnstileServerMessage(
   }
 
   return data?.message ?? 'Human verification failed. Please try again.';
+}
+
+function getAuthApiUrl() {
+  const configuredUrl = import.meta.env.VITE_CERTIFICATE_API_URL?.trim().replace(/^['"]|['"]$/g, '');
+
+  if (configuredUrl) {
+    const normalized = configuredUrl.replace(/\/$/, '');
+
+    if (!import.meta.env.DEV && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized)) {
+      throw new Error('Verification backend URL is configured for localhost in production.');
+    }
+
+    return normalized;
+  }
+
+  if (import.meta.env.DEV) {
+    return 'http://localhost:4000';
+  }
+
+  throw new Error('Verification backend URL is not configured.');
 }
 
 function getLoginModeFromLocation(): 'signin' | 'signup' {
