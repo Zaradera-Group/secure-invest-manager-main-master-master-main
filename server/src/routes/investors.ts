@@ -12,18 +12,18 @@ investorsRouter.use(requireAuth);
 
 investorsRouter.post(
   "/:id/sync-certificate",
-  requireRole("investment_manager", "general_manager", "admin", "super_admin"),
+  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
   refreshInvestorCertificate,
 );
 
 investorsRouter.patch(
   "/:id",
-  requireRole("investment_manager", "general_manager", "admin", "super_admin"),
+  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
   updateInvestorAndRefreshCertificate,
 );
 
 investorsRouter.delete(
   "/:id",
-  requireRole("investment_manager", "general_manager", "admin", "super_admin"),
+  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
   deleteInvestorCompletely,
 );

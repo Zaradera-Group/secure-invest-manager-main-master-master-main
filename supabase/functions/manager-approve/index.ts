@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
     }
 
     const authorization = req.headers.get('Authorization') ?? ''
-    const { user, serviceClient } = await requireAuthenticatedUser(authorization, ['investment_manager'])
+    const { user, serviceClient } = await requireAuthenticatedUser(authorization, ['investment_manager', 'accountant'])
     const payload = await req.json() as ApprovalInput
     const certificate = await approveByManager(serviceClient, user.id, payload)
 

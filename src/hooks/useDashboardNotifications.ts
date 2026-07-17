@@ -216,6 +216,7 @@ function useRealtimeNotificationInvalidation(userId?: string, email?: string | n
 function mapAppRoleToNotificationRole(role: string | null): WorkflowNotificationRole | null {
   switch (role) {
     case 'investment_manager':
+    case 'accountant':
       return 'manager';
     case 'general_manager':
       return 'general_manager';

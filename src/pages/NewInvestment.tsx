@@ -350,12 +350,12 @@ export default function NewInvestment() {
         title: isEditMode ? 'Investor Updated' : 'Investment Created',
         description: isEditMode
           ? `${form.name}'s details have been updated successfully.`
-          : role === 'investment_manager'
+          : role === 'investment_manager' || role === 'accountant'
             ? `${form.name}'s ${getInvestorCategoryLabel(form.investorCategory).toLowerCase()} has been recorded. Open the investor record to generate the certificate and start the approval workflow.`
             : `${form.name}'s investment has been recorded successfully.`,
       });
 
-      navigate(isEditMode || role === 'investment_manager' ? `/investors/${savedInvestor.id}` : '/investors');
+      navigate(isEditMode || role === 'investment_manager' || role === 'accountant' ? `/investors/${savedInvestor.id}` : '/investors');
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       toast({

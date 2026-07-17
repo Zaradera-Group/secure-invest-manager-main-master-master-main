@@ -3,7 +3,7 @@ import { buildCertificatePdf } from './certificatePdf.ts'
 import { sendResendEmail } from './certificateEmail.ts'
 
 export type CertificateStatus = 'pending_manager' | 'pending_general_manager' | 'pending_ceo' | 'approved' | 'sent'
-export type WorkflowRole = 'investment_manager' | 'general_manager' | 'super_admin' | 'investor'
+export type WorkflowRole = 'investment_manager' | 'accountant' | 'general_manager' | 'super_admin' | 'investor'
 
 export type CertificateRecord = {
   id: string
@@ -454,7 +454,7 @@ function extractStoragePath(value: string) {
 async function notifyRole(
   serviceClient: ReturnType<typeof createClient>,
   args: {
-    role: 'investment_manager' | 'general_manager' | 'super_admin'
+    role: 'investment_manager' | 'accountant' | 'general_manager' | 'super_admin'
     notificationRole: 'manager' | 'general_manager' | 'ceo'
     title: string
     detail: string

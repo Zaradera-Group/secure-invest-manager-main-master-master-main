@@ -1,4 +1,4 @@
-export type AppRole = "investment_manager" | "general_manager" | "super_admin" | "admin";
+export type AppRole = "investment_manager" | "accountant" | "general_manager" | "super_admin" | "admin";
 
 export type CertificateStatus =
   | "pending_manager"

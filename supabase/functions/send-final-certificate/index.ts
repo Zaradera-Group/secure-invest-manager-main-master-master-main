@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     }
 
     const authorization = req.headers.get('Authorization') ?? ''
-    const { user, serviceClient } = await requireAuthenticatedUser(authorization, ['investment_manager', 'super_admin'])
+    const { user, serviceClient } = await requireAuthenticatedUser(authorization, ['investment_manager', 'accountant', 'super_admin'])
     const payload = await req.json() as { certificateId?: string }
 
     if (!payload.certificateId) {

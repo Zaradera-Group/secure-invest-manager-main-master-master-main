@@ -8,10 +8,15 @@ type DashboardScope = 'staff' | 'executive' | 'all';
 const CERTIFICATE_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 const CERTIFICATE_REFETCH_INTERVAL_MS = 3 * 60 * 1000;
 const EXECUTIVE_ROLES = ['admin', 'super_admin'] as const;
+const MANAGER_EQUIVALENT_ROLES = ['investment_manager', 'accountant'] as const;
 const VISIBILITY_SIGN_OUT_BYPASS_STORAGE_KEY = 'auth:visibility-signout-bypass-until';
 
 function isExecutiveRole(role: string | null | undefined): role is (typeof EXECUTIVE_ROLES)[number] {
   return !!role && EXECUTIVE_ROLES.includes(role as (typeof EXECUTIVE_ROLES)[number]);
+}
+
+function isManagerEquivalentRole(role: string | null | undefined): role is (typeof MANAGER_EQUIVALENT_ROLES)[number] {
+  return !!role && MANAGER_EQUIVALENT_ROLES.includes(role as (typeof MANAGER_EQUIVALENT_ROLES)[number]);
 }
 
 export type WorkflowCertificateStatus =
@@ -323,7 +328,7 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
 
   return useQuery({
     queryKey: ['certificate-inbox', role, user?.id, scope],
-    enabled: !!role && ['investment_manager', 'general_manager', 'super_admin', 'admin'].includes(role),
+    enabled: !!role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role),
     queryFn: async () => {
       if (!role) {
         return [] as CertificateInboxItem[];
@@ -331,6 +336,7 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
 
       const statusesByRole: Partial<Record<AppRole, WorkflowCertificateStatus[]>> = {
         investment_manager: ['pending_manager', 'approved'],
+        accountant: ['pending_manager', 'approved'],
         general_manager: ['pending_general_manager', 'approved'],
         super_admin: ['pending_ceo'],
         admin: ['pending_manager', 'pending_general_manager', 'pending_ceo', 'approved'],
@@ -361,7 +367,7 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
       if (error) throw error;
 
       let certificateRows = (certificates ?? []) as unknown as WorkflowCertificate[];
-      if (role === 'investment_manager' && user?.id) {
+      if (isManagerEquivalentRole(role) && user?.id) {
         certificateRows = certificateRows.filter((certificate) =>
           certificate.status === 'pending_manager' || certificate.created_by === user.id,
         );
@@ -431,7 +437,7 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
       if (!role) return 0;
 
       let statusFilter: WorkflowCertificateStatus[] = [];
-      if (role === 'investment_manager') {
+      if (isManagerEquivalentRole(role)) {
         statusFilter = ['pending_manager', 'approved'];
       } else if (role === 'general_manager') {
         statusFilter = ['pending_general_manager', 'approved'];
@@ -461,7 +467,7 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
       if (error) throw error;
       const rows = ((data ?? []) as Array<{ id: string; status: WorkflowCertificateStatus; created_by?: string | null }>)
         .filter((certificate) => {
-          if (role === 'investment_manager') {
+          if (isManagerEquivalentRole(role)) {
             return certificate.status === 'pending_manager' || certificate.created_by === user?.id;
           }
 
@@ -559,7 +565,7 @@ function getRequestBody(payload: {
 }
 
 function getNextActionLabel(role: AppRole, certificate: WorkflowCertificate) {
-  if (role === 'investment_manager' && certificate.status === 'pending_manager') {
+  if (isManagerEquivalentRole(role) && certificate.status === 'pending_manager') {
     return 'Review and sign';
   }
 
@@ -567,7 +573,7 @@ function getNextActionLabel(role: AppRole, certificate: WorkflowCertificate) {
     return 'Sign as Investment Manager';
   }
 
-  if (role === 'investment_manager' && certificate.status === 'approved') {
+  if (isManagerEquivalentRole(role) && certificate.status === 'approved') {
     return 'Send to investor';
   }
 

@@ -72,9 +72,9 @@ const AnimatedRoutes = () => {
           <Route path="/certificates" element={<CertificatesList />} />
           <Route path="/certificates/:id/view" element={<CertificateViewer />} />
           <Route path="/investors/:id" element={<InvestorDetail />} />
-          <Route path="/investors/:id/edit" element={<ProtectedRoute allowedRoles={['investment_manager', 'admin']}><NewInvestment /></ProtectedRoute>} />
+          <Route path="/investors/:id/edit" element={<ProtectedRoute allowedRoles={['investment_manager', 'accountant', 'admin']}><NewInvestment /></ProtectedRoute>} />
           <Route path="/investments/new" element={<NewInvestment />} />
-          <Route path="/public-intake-inbox" element={<ProtectedRoute allowedRoles={['investment_manager', 'general_manager', 'admin', 'super_admin']}><PublicIntakeInbox /></ProtectedRoute>} />
+          <Route path="/public-intake-inbox" element={<ProtectedRoute allowedRoles={['investment_manager', 'accountant', 'general_manager', 'admin', 'super_admin']}><PublicIntakeInbox /></ProtectedRoute>} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settlement-discrepancies" element={<SettlementDiscrepancies />} />
           <Route path="/notification-audit" element={<ProtectedRoute allowedRoles={['admin', 'super_admin']}><NotificationAudit /></ProtectedRoute>} />

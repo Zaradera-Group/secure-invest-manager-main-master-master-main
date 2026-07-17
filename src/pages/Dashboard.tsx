@@ -152,7 +152,7 @@ export default function Dashboard({
 
   const pieColors = ['#f97316', '#0f766e', '#2563eb', '#7c3aed'];
   const hasChartData = investmentTypeChartData.some((entry) => entry.investors > 0 || entry.value > 0);
-  const canUsePublicIntakeTools = !!role && ['investment_manager', 'general_manager', 'super_admin', 'admin'].includes(role);
+  const canUsePublicIntakeTools = !!role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role);
   const publicIntakeLink = `${globalThis.location.origin}/investor-intake`;
 
   const handleCopyPublicIntakeLink = async () => {
@@ -534,7 +534,7 @@ export default function Dashboard({
         </motion.div>
       </div>
 
-      {role && ['investment_manager', 'general_manager', 'super_admin', 'admin'].includes(role) && (
+      {role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role) && (
         <motion.div variants={item}>
           <Card className="glass-card">
             <CardHeader className="pb-3">

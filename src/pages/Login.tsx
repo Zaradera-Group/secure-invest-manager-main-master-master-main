@@ -49,7 +49,7 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [requestedRole, setRequestedRole] = useState<'ceo' | 'general_manager' | 'investment_manager' | 'it_manager'>('investment_manager');
+  const [requestedRole, setRequestedRole] = useState<'ceo' | 'general_manager' | 'investment_manager' | 'accountant' | 'it_manager'>('investment_manager');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -261,6 +261,7 @@ export default function Login() {
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     >
                       <option value="investment_manager">Investment Manager</option>
+                      <option value="accountant">Accountant</option>
                       <option value="general_manager">General Manager</option>
                       <option value="ceo">CEO</option>
                       <option value="it_manager">IT Manager</option>

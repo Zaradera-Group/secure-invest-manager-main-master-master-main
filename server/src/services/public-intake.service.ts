@@ -362,7 +362,7 @@ async function resolveInternalRecipients(args: {
     });
   }
 
-  const targetEmails = await resolveEmailsByRoles(["investment_manager", "general_manager", "super_admin"]);
+  const targetEmails = await resolveEmailsByRoles(["investment_manager", "accountant", "general_manager", "super_admin"]);
 
   for (const email of targetEmails) {
     const normalizedEmail = email.trim().toLowerCase();
@@ -379,7 +379,7 @@ async function resolveInternalRecipients(args: {
   return Array.from(recipients.values());
 }
 
-async function resolveEmailsByRoles(roles: Array<"investment_manager" | "general_manager" | "super_admin">) {
+async function resolveEmailsByRoles(roles: Array<"investment_manager" | "accountant" | "general_manager" | "super_admin">) {
   const { data: userRoles, error: rolesError } = await adminSupabase
     .from("user_roles")
     .select("user_id, role");
@@ -390,7 +390,7 @@ async function resolveEmailsByRoles(roles: Array<"investment_manager" | "general
 
   const targetUserIds = new Set(
     (userRoles ?? [])
-      .filter((row) => roles.includes(row.role as "investment_manager" | "general_manager" | "super_admin"))
+      .filter((row) => roles.includes(row.role as "investment_manager" | "accountant" | "general_manager" | "super_admin"))
       .map((row) => row.user_id as string),
   );
 
@@ -412,6 +412,7 @@ async function resolveEmailsByRoles(roles: Array<"investment_manager" | "general
 function mapRecipientRole(role?: string | null): "manager" | "general_manager" | "ceo" {
   switch (role) {
     case "investment_manager":
+    case "accountant":
       return "manager";
     case "general_manager":
       return "general_manager";

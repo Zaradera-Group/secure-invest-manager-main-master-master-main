@@ -868,6 +868,7 @@ export type Database = {
         | "admin"
         | "staff"
         | "investment_manager"
+        | "accountant"
         | "general_manager"
         | "software_engineer"
       gender_type: "Male" | "Female" | "Other"
@@ -998,7 +999,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["super_admin", "admin", "staff", "investment_manager", "general_manager", "software_engineer"],
+      app_role: ["super_admin", "admin", "staff", "investment_manager", "accountant", "general_manager", "software_engineer"],
       gender_type: ["Male", "Female", "Other"],
       investment_type: ["Upfront", "Monthly", "Quarterly", "At Maturity"],
       liquidation_status: ["Active", "Matured", "Liquidated", "Pending"],

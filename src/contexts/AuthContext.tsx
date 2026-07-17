@@ -7,10 +7,11 @@ type AppRole =
   | 'admin'
   | 'staff'
   | 'investment_manager'
+  | 'accountant'
   | 'general_manager'
   | 'software_engineer';
 
-type RequestedRole = 'ceo' | 'general_manager' | 'investment_manager' | 'it_manager';
+type RequestedRole = 'ceo' | 'general_manager' | 'investment_manager' | 'accountant' | 'it_manager';
 type AllowedAuthUser = {
   email: string;
   role: AppRole | null;
@@ -98,6 +99,9 @@ function normalizeAppRole(role: string | null | undefined): AppRole | null {
     case 'investment_manager':
     case 'investment_mgr':
       return 'investment_manager';
+    case 'accountant':
+    case 'company_accountant':
+      return 'accountant';
     case 'gm':
     case 'generalmanager':
     case 'general_manager':
@@ -119,6 +123,8 @@ function formatRoleLabel(role: AppRole): string {
       return 'General Manager';
     case 'investment_manager':
       return 'Investment Manager';
+    case 'accountant':
+      return 'Accountant';
     case 'admin':
       return 'IT Manager';
     case 'staff':
@@ -156,6 +162,8 @@ function mapRequestedRoleToAppRole(requestedRole: RequestedRole): AppRole {
       return 'general_manager';
     case 'investment_manager':
       return 'investment_manager';
+    case 'accountant':
+      return 'accountant';
     case 'it_manager':
       return 'admin';
   }
@@ -194,7 +202,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const requiresMfaForRole = (nextRole: AppRole | null) =>
-    nextRole === 'investment_manager' || nextRole === 'general_manager' || nextRole === 'super_admin';
+    nextRole === 'investment_manager' || nextRole === 'accountant' || nextRole === 'general_manager' || nextRole === 'super_admin';
 
   const refreshMfaStatus = useCallback(async (force = false) => {
     const now = Date.now();

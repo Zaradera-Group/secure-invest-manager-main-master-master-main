@@ -37,6 +37,8 @@ function formatCreatorRoleLabel(role: string | null | undefined) {
   switch (role) {
     case 'investment_manager':
       return 'Investment Manager';
+    case 'accountant':
+      return 'Accountant';
     case 'general_manager':
       return 'General Manager';
     case 'admin':

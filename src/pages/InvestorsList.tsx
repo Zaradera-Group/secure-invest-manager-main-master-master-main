@@ -44,7 +44,7 @@ export default function InvestorsList() {
   });
   const investors = data?.data ?? [];
   const totalCount = data?.count ?? 0;
-  const canDeleteInvestors = role === 'investment_manager' || role === 'general_manager' || role === 'admin' || role === 'super_admin';
+  const canDeleteInvestors = role === 'investment_manager' || role === 'accountant' || role === 'general_manager' || role === 'admin' || role === 'super_admin';
   const isExecutiveViewer = role === 'admin' || role === 'super_admin';
   const emptyStateColSpan = (isExecutiveViewer ? 12 : 11) + (canDeleteInvestors ? 1 : 0);
 

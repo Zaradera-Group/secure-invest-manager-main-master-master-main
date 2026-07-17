@@ -39,7 +39,7 @@ export default function Settings() {
 
   const { data: isAvailable } = useQuery({
     queryKey: ['user-availability', user?.id, role],
-    enabled: !!user?.id && !!role && (role === 'investment_manager' || role === 'general_manager'),
+    enabled: !!user?.id && !!role && (role === 'investment_manager' || role === 'accountant' || role === 'general_manager'),
     queryFn: async () => {
       const { data, error } = await supabase
         .from('user_roles' as never)
@@ -355,7 +355,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {(role === 'investment_manager' || role === 'general_manager') && (
+      {(role === 'investment_manager' || role === 'accountant' || role === 'general_manager') && (
         <Card className="glass-card">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-heading flex items-center gap-2">

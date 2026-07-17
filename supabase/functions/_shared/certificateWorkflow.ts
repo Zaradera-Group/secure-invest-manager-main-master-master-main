@@ -123,11 +123,11 @@ async function getAuthUserEmail(supabaseClient: ReturnType<typeof createClient>,
 
 function ensureActionAllowed(role: AppRole, action: CertificateAction) {
   const permissions: Record<CertificateAction, AppRole[]> = {
-    generate: ['investment_manager'],
-    approve_investment_manager: ['investment_manager'],
+    generate: ['investment_manager', 'accountant'],
+    approve_investment_manager: ['investment_manager', 'accountant'],
     approve_general_manager: ['general_manager'],
     approve_ceo: ['super_admin'],
-    send_to_investor: ['investment_manager'],
+    send_to_investor: ['investment_manager', 'accountant'],
   }
 
   if (!permissions[action].includes(role)) {
@@ -293,7 +293,7 @@ async function applyAction(args: {
   } else if (action === 'approve_general_manager') {
     await sendApprovalNotifications(supabaseClient, ['super_admin'], `Certificate for ${investor.name} is ready for CEO final approval.`, userId, investor.id as string, 'certificate_ceo_review')
   } else if (action === 'approve_ceo') {
-    await sendApprovalNotifications(supabaseClient, ['investment_manager'], `Certificate for ${investor.name} has CEO approval and is waiting for the Investment Manager final signature.`, userId, investor.id as string, 'certificate_investment_manager_finalization')
+    await sendApprovalNotifications(supabaseClient, ['investment_manager', 'accountant'], `Certificate for ${investor.name} has CEO approval and is waiting for the Investment Manager final signature.`, userId, investor.id as string, 'certificate_investment_manager_finalization')
   }
 
   return data

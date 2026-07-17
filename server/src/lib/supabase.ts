@@ -70,7 +70,7 @@ const isSupabaseTimeoutError = (error: unknown) => {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const mapRole = (role: string): AppRole => {
-  if (role === "investment_manager" || role === "general_manager" || role === "super_admin" || role === "admin") {
+  if (role === "investment_manager" || role === "accountant" || role === "general_manager" || role === "super_admin" || role === "admin") {
     return role;
   }
 

@@ -6,7 +6,7 @@ export function ProtectedRoute({
   allowedRoles,
 }: Readonly<{
   children: React.ReactNode;
-  allowedRoles?: Array<'super_admin' | 'admin' | 'staff' | 'investment_manager' | 'general_manager' | 'software_engineer'>;
+  allowedRoles?: Array<'super_admin' | 'admin' | 'staff' | 'investment_manager' | 'accountant' | 'general_manager' | 'software_engineer'>;
 }>) {
   const { session, loading, role } = useAuth();
 

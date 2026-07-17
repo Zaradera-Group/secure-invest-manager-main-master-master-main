@@ -99,6 +99,7 @@ export default function SuperAdminDashboard() {
   const staffCount =
     (roleCounts.staff ?? 0)
     + (roleCounts.investment_manager ?? 0)
+    + (roleCounts.accountant ?? 0)
     + (roleCounts.general_manager ?? 0);
 
   const cards = [
@@ -181,6 +182,8 @@ function formatRoleLabel(role: string | null | undefined) {
   switch (role) {
     case 'investment_manager':
       return 'Investment Manager';
+    case 'accountant':
+      return 'Accountant';
     case 'general_manager':
       return 'General Manager';
     case 'admin':

@@ -10,6 +10,7 @@ export type AppRole =
   | 'admin'
   | 'staff'
   | 'investment_manager'
+  | 'accountant'
   | 'general_manager'
   | 'software_engineer'
 

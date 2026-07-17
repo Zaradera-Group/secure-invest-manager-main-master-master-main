@@ -78,7 +78,7 @@ export default function InvestorDetail() {
     { label: 'Days Until Maturity', value: daysText },
   ];
 
-  const canDeleteInvestor = role === 'investment_manager' || role === 'general_manager' || role === 'admin' || role === 'super_admin';
+  const canDeleteInvestor = role === 'investment_manager' || role === 'accountant' || role === 'general_manager' || role === 'admin' || role === 'super_admin';
 
   const handleDeleteInvestor = async () => {
     try {
@@ -120,7 +120,7 @@ export default function InvestorDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {(role === 'investment_manager' || role === 'admin') && (
+          {(role === 'investment_manager' || role === 'accountant' || role === 'admin') && (
             <Button variant="outline" size="sm" asChild>
               <Link to={`/investors/${investor.id}/edit`}>
                 <Edit className="w-4 h-4 mr-2" />

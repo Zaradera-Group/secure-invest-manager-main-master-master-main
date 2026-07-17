@@ -40,6 +40,10 @@ function isExecutiveRole(role: string | null | undefined) {
   return role === 'super_admin' || role === 'admin';
 }
 
+function isManagerEquivalentRole(role: string | null | undefined) {
+  return role === 'investment_manager' || role === 'accountant';
+}
+
 export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkflowCardProps>) {
   const { role, user } = useAuth();
   const navigate = useNavigate();
@@ -67,7 +71,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
 
     const actions: Array<{ action: CertificateAction; label: string; icon: typeof FileCheck2; requiresSignature?: boolean }> = [];
 
-    if (!certificate && (role === 'investment_manager' || isExecutiveRole(role))) {
+    if (!certificate && (isManagerEquivalentRole(role) || isExecutiveRole(role))) {
       actions.push({ action: 'generate', label: 'Create Certificate', icon: FileCheck2 });
     }
 
@@ -75,7 +79,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
       actions.push({ action: 'approve_investment_manager', label: 'Sign as Investment Manager', icon: PenSquare, requiresSignature: true });
     }
 
-    if (role === 'investment_manager' && certificate?.status === 'pending_manager') {
+    if (isManagerEquivalentRole(role) && certificate?.status === 'pending_manager') {
       actions.push({
         action: 'approve_investment_manager',
         label: certificate.created_by === user?.id ? 'Sign and Submit to General Manager' : 'Sign and Submit to CEO',
@@ -88,7 +92,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
       actions.push({ action: 'send', label: 'Send Certificate to Investor', icon: CheckCircle2 });
     }
 
-    if (role === 'investment_manager' && certificate?.status === 'approved') {
+    if (isManagerEquivalentRole(role) && certificate?.status === 'approved') {
       actions.push({ action: 'send', label: 'Send Certificate to Investor', icon: CheckCircle2 });
     }
 
@@ -126,7 +130,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
       return 'Create the certificate first to begin the approval workflow.';
     }
 
-    if (role === 'investment_manager' && certificate.status === 'pending_manager') {
+    if (isManagerEquivalentRole(role) && certificate.status === 'pending_manager') {
       return certificate.created_by === user?.id
         ? 'Add the Investment Manager signature, then submit it to the General Manager.'
         : 'Add the Investment Manager signature, then submit it to the CEO for final approval.';
@@ -162,7 +166,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
         : 'Approve this certificate so it returns to the Investment Manager for final sending.';
     }
 
-    if (role === 'investment_manager' && certificate.status === 'approved') {
+    if (isManagerEquivalentRole(role) && certificate.status === 'approved') {
       return 'The CEO has approved this certificate. Send it to the investor from here.';
     }
 
@@ -377,7 +381,7 @@ export function CertificateWorkflowCard({ investor }: Readonly<CertificateWorkfl
                       : 'Review the certificate, then sign and submit it to the CEO.'}
                   </p>
                 )}
-                {latestCertificateUrl && role === 'investment_manager' && certificate?.status === 'approved' && (
+                {latestCertificateUrl && isManagerEquivalentRole(role) && certificate?.status === 'approved' && (
                   <p className="text-emerald-900 text-sm self-center">
                     Certificate approved. Ready to send to investor.
                   </p>

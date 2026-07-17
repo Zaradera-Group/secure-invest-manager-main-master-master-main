@@ -180,6 +180,8 @@ const stageConfig: Record<
   pending_ceo: { userRole: "ceo", appRole: "super_admin" },
 };
 
+const isManagerEquivalentRole = (role: AppRole) => role === "investment_manager" || role === "accountant";
+
 export class CertificatesService {
   async getLatestCertificateForInvestor(
     actor: AuthenticatedUser,
@@ -281,8 +283,8 @@ export class CertificatesService {
       throw new Error("General Managers can only refresh certificates they created.");
     }
 
-    if (actor.role === "investment_manager" && latestCertificate.created_by !== actor.id) {
-      throw new Error("Investment Managers can only refresh certificates they created.");
+    if (isManagerEquivalentRole(actor.role) && latestCertificate.created_by !== actor.id) {
+      throw new Error("Investment Managers and Accountants can only refresh certificates they created.");
     }
 
     const updated = await this.updateCertificate(latestCertificate.id, {
@@ -386,8 +388,8 @@ export class CertificatesService {
         throw new Error("General Managers can only refresh certificates they created.");
       }
 
-      if (actor.role === "investment_manager" && existingCertificate.created_by !== actor.id) {
-        throw new Error("Investment Managers can only refresh certificates they created.");
+      if (isManagerEquivalentRole(actor.role) && existingCertificate.created_by !== actor.id) {
+        throw new Error("Investment Managers and Accountants can only refresh certificates they created.");
       }
     }
 
@@ -736,8 +738,8 @@ export class CertificatesService {
       throw new Error("Certificate must be approved before sending");
     }
 
-    if (actor.role === "investment_manager" && certificate.created_by !== actor.id) {
-      throw new Error("Only the originating Investment Manager can send this certificate.");
+    if (isManagerEquivalentRole(actor.role) && certificate.created_by !== actor.id) {
+      throw new Error("Only the originating Investment Manager or Accountant can send this certificate.");
     }
 
     if (actor.role === "general_manager" && certificate.created_by !== actor.id) {
@@ -941,7 +943,10 @@ export class CertificatesService {
     certificate: CertificateRecord,
   ) {
     const stage = stageConfig[status];
-    const recipients = await this.getUsersByRole(stage.appRole);
+    const recipientRoles = stage.appRole === "investment_manager"
+      ? (["investment_manager", "accountant"] as AppRole[])
+      : [stage.appRole];
+    const recipients = await this.getUsersByRoles(recipientRoles);
     const investorActionPath = await this.getInvestorActionPath(certificate);
 
     await Promise.all(
@@ -1034,17 +1039,17 @@ export class CertificatesService {
     }
   }
 
-  private async getUsersByRole(role: AppRole) {
+  private async getUsersByRoles(roles: AppRole[]) {
     const { data, error } = await adminSupabase
       .from("user_roles")
       .select("user_id")
-      .eq("role", role);
+      .in("role", roles);
 
     if (error) {
-      throw new Error(`Failed to fetch users for role ${role}: ${error.message}`);
+      throw new Error(`Failed to fetch users for roles ${roles.join(", ")}: ${error.message}`);
     }
 
-    const userIds = (data ?? []).map((row) => row.user_id as string);
+    const userIds = [...new Set((data ?? []).map((row) => row.user_id as string))];
 
     if (userIds.length === 0) {
       return [];
@@ -1053,7 +1058,7 @@ export class CertificatesService {
     const { data: authUsers, error: usersError } = await adminSupabase.auth.admin.listUsers();
 
     if (usersError) {
-      throw new Error(`Failed to fetch auth users for role ${role}: ${usersError.message}`);
+      throw new Error(`Failed to fetch auth users for roles ${roles.join(", ")}: ${usersError.message}`);
     }
 
     return (authUsers.users ?? [])
@@ -1351,7 +1356,7 @@ export class CertificatesService {
       return;
     }
 
-    if ((actor.role === "investment_manager" || actor.role === "general_manager") && createdBy === actor.id) {
+    if ((isManagerEquivalentRole(actor.role) || actor.role === "general_manager") && createdBy === actor.id) {
       return;
     }
 
@@ -1541,6 +1546,7 @@ export class CertificatesService {
         }
         break;
       case "investment_manager":
+      case "accountant":
         if (
           certificate.status === "pending_manager"
           || certificate.created_by === actor.id
