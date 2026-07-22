@@ -498,15 +498,7 @@ export class CertificatesService {
         input.investmentTenure,
         input.investmentType ?? undefined,
       );
-    const initialStatus: CertificateStatus =
-      options.forceFullApprovalWorkflow
-        ? "pending_manager"
-        : actor.role === "admin"
-        ? "approved"
-        : actor.role === "super_admin"
-          ? "pending_ceo"
-          : "pending_manager";
-    const isAdminAutoApproved = !options.forceFullApprovalWorkflow && actor.role === "admin";
+    const initialStatus: CertificateStatus = "pending_manager";
 
     const { data, error } = await adminSupabase
       .from("certificates")
@@ -522,8 +514,8 @@ export class CertificatesService {
         investment_tenure: input.investmentTenure ?? null,
         principal_maturity_date: input.principalMaturityDate ?? null,
         interest_payment: interestPaymentDescription,
-        approved_at: isAdminAutoApproved ? new Date().toISOString() : null,
-        ceo_approved_by: isAdminAutoApproved ? actor.id : null,
+        approved_at: null,
+        ceo_approved_by: null,
         status: initialStatus,
         created_by: actor.id,
       })
@@ -539,9 +531,7 @@ export class CertificatesService {
       investorReferenceNumber: input.investorReferenceNumber ?? null,
     });
 
-    if (initialStatus === "pending_manager" || initialStatus === "pending_ceo") {
-      await this.notifyStageUsers(initialStatus, refreshedCertificate);
-    }
+    await this.notifyStageUsers(initialStatus, refreshedCertificate);
 
     await insertAuditLog({
       action: "certificate_created",
@@ -564,16 +554,12 @@ export class CertificatesService {
   async managerApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
     const input = signatureSchema.parse(payload);
     const certificate = await this.getCertificate(certificateId);
-    const creatorRole = await this.getRoleForUser(certificate.created_by);
 
     if (certificate.status !== "pending_manager") {
       throw new Error("Certificate is not awaiting investment manager action");
     }
 
-    const nextStatus: CertificateStatus =
-      creatorRole === "general_manager"
-        ? "pending_ceo"
-        : "pending_general_manager";
+    const nextStatus: CertificateStatus = "pending_general_manager";
 
     const updated = await this.updateCertificate(certificateId, {
       manager_signature: input.signature,
@@ -598,16 +584,12 @@ export class CertificatesService {
   async generalManagerApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
     const input = signatureSchema.parse(payload);
     const certificate = await this.getCertificate(certificateId);
-    const creatorRole = await this.getRoleForUser(certificate.created_by);
 
     if (certificate.status !== "pending_general_manager") {
       throw new Error("Certificate is not awaiting general manager action");
     }
 
-    const nextStatus: CertificateStatus =
-      creatorRole === "general_manager"
-        ? "pending_manager"
-        : "pending_ceo";
+    const nextStatus: CertificateStatus = "pending_ceo";
 
     const updated = await this.updateCertificate(certificateId, {
       general_manager_signature: input.signature,
@@ -632,13 +614,9 @@ export class CertificatesService {
   async ceoApprove(certificateId: string, actor: AuthenticatedUser, payload: unknown) {
     const input = optionalSignatureSchema.parse(payload);
     const certificate = await this.getCertificate(certificateId);
-    const creatorRole = await this.getRoleForUser(certificate.created_by);
-
     if (certificate.status !== "pending_ceo") {
       throw new Error("Certificate is not awaiting CEO approval");
     }
-
-    const isDirectCeoFlow = certificate.created_by === actor.id;
 
     const approvedCertificate = await this.updateCertificate(certificateId, {
       ceo_signature: input.signature ?? certificate.ceo_signature,
@@ -649,70 +627,14 @@ export class CertificatesService {
 
     const refreshedCertificate = await this.persistPdf(approvedCertificate);
 
-    if (isDirectCeoFlow) {
-      const signedCertificateLink = await this.createInvestorCertificateEmailLink(refreshedCertificate);
-      await sendInvestorCertificateEmail(
-        refreshedCertificate.investor_email,
-        refreshedCertificate,
-        signedCertificateLink,
-      );
-      const investorPhone = refreshedCertificate.investor_phone?.trim();
-      if (investorPhone) {
-        await this.sendSmsSafely("investor certificate", () =>
-          sendInvestorCertificateSms(
-            investorPhone,
-            refreshedCertificate,
-            signedCertificateLink,
-          )
-        );
-      }
-
-      const sentCertificate = await this.updateCertificate(certificateId, {
-        sent_at: new Date().toISOString(),
-        sent_by: actor.id,
-        status: "sent",
-      });
-
-      await this.insertNotification({
-        certificateId,
-        message: `Your certificate for ${refreshedCertificate.investor_name} is ready.`,
-        recipientEmail: refreshedCertificate.investor_email,
-        userRole: "investor",
-      });
-
-      await insertAuditLog({
-        action: "certificate_approved_by_ceo",
-        actorUserId: actor.id,
-        actorEmail: actor.email,
-        actorRole: actor.role,
-        certificateId,
-        targetEmail: refreshedCertificate.investor_email,
-        metadata: {
-          directCeoFlow: true,
-        },
-      });
-
-      await insertAuditLog({
-        action: "certificate_sent_to_investor",
-        actorUserId: actor.id,
-        actorEmail: actor.email,
-        actorRole: actor.role,
-        certificateId,
-        targetEmail: refreshedCertificate.investor_email,
-        metadata: {
-          directCeoFlow: true,
-        },
-      });
-
-      return sentCertificate;
-    }
-
-    if (refreshedCertificate.created_by) {
+    const finalSenderUserId = refreshedCertificate.manager_reviewed_by ?? refreshedCertificate.created_by;
+    if (finalSenderUserId) {
       await this.insertNotification({
         certificateId,
         message: `Certificate for ${refreshedCertificate.investor_name} has been approved and is ready to send to the investor.`,
-        recipientUserId: refreshedCertificate.created_by,
-        userRole: creatorRole === "general_manager" ? "general_manager" : "manager",
+        recipientUserId: finalSenderUserId,
+        userRole: "manager",
+        actionPath: await this.getInvestorActionPath(refreshedCertificate),
       });
     }
 
@@ -738,12 +660,13 @@ export class CertificatesService {
       throw new Error("Certificate must be approved before sending");
     }
 
-    if (isManagerEquivalentRole(actor.role) && certificate.created_by !== actor.id) {
-      throw new Error("Only the originating Investment Manager or Accountant can send this certificate.");
-    }
-
-    if (actor.role === "general_manager" && certificate.created_by !== actor.id) {
+    if (isManagerEquivalentRole(actor.role)) {
+      // Investment Managers and Accountants share final delivery rights after CEO approval.
+    } else if (actor.role === "general_manager" && certificate.created_by !== actor.id) {
       throw new Error("Only the originating General Manager can send this certificate.");
+    }
+    else if (actor.role !== "admin") {
+      throw new Error("Forbidden for current role");
     }
 
     const refreshedCertificate = await this.persistPdf(certificate);
@@ -1549,6 +1472,7 @@ export class CertificatesService {
       case "accountant":
         if (
           certificate.status === "pending_manager"
+          || certificate.status === "approved"
           || certificate.created_by === actor.id
           || certificate.manager_reviewed_by === actor.id
         ) {

@@ -369,7 +369,7 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
       let certificateRows = (certificates ?? []) as unknown as WorkflowCertificate[];
       if (isManagerEquivalentRole(role) && user?.id) {
         certificateRows = certificateRows.filter((certificate) =>
-          certificate.status === 'pending_manager' || certificate.created_by === user.id,
+          certificate.status === 'pending_manager' || certificate.status === 'approved' || certificate.created_by === user.id,
         );
       }
       if (role === 'general_manager' && user?.id) {
@@ -468,7 +468,7 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
       const rows = ((data ?? []) as Array<{ id: string; status: WorkflowCertificateStatus; created_by?: string | null }>)
         .filter((certificate) => {
           if (isManagerEquivalentRole(role)) {
-            return certificate.status === 'pending_manager' || certificate.created_by === user?.id;
+            return certificate.status === 'pending_manager' || certificate.status === 'approved' || certificate.created_by === user?.id;
           }
 
           if (role === 'general_manager') {

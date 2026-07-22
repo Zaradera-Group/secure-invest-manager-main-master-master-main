@@ -72,7 +72,7 @@ create policy "Workflow roles can view certificates they created, need to act on
   using (
     created_by = auth.uid()
     or (
-      status::text = 'pending_manager'
+      status::text in ('pending_manager', 'approved')
       and exists (
         select 1
         from public.user_roles ur
@@ -120,7 +120,7 @@ create policy "Workflow approvers can view certificate-linked investors"
         and c.investor_name = public.investors.name
         and (
           (
-            c.status::text = 'pending_manager'
+            c.status::text in ('pending_manager', 'approved')
             and exists (
               select 1
               from public.user_roles ur
