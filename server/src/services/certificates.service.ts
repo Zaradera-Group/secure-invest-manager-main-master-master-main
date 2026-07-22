@@ -1440,11 +1440,24 @@ export class CertificatesService {
   }
 
   private async getInvestorActionPath(certificate: CertificateRecord) {
+    if (certificate.investor_id) {
+      const { data: investorById, error: investorByIdError } = await adminSupabase
+        .from("investors")
+        .select("id")
+        .eq("id", certificate.investor_id)
+        .maybeSingle();
+
+      if (!investorByIdError && investorById?.id) {
+        return `/investors/${investorById.id}`;
+      }
+    }
+
     const { data, error } = await adminSupabase
       .from("investors")
       .select("id")
-      .eq("email", certificate.investor_email)
-      .eq("name", certificate.investor_name)
+      .eq("email", certificate.investor_email.trim().toLowerCase())
+      .order("updated_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error || !data?.id) {

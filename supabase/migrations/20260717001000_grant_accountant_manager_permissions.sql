@@ -116,8 +116,13 @@ create policy "Workflow approvers can view certificate-linked investors"
     exists (
       select 1
       from public.certificates c
-      where lower(c.investor_email) = lower(public.investors.email)
-        and c.investor_name = public.investors.name
+      where (
+          c.investor_id = public.investors.id
+          or (
+            lower(c.investor_email) = lower(public.investors.email)
+            and c.investor_name = public.investors.name
+          )
+        )
         and (
           (
             c.status::text in ('pending_manager', 'approved')
@@ -202,6 +207,21 @@ using (
     and lower(coalesce(recipient_email, '')) = lower(coalesce(auth.jwt() ->> 'email', ''))
   )
 );
+
+update public.notifications n
+set action_path = '/investors/' || i.id::text
+from public.certificates c
+join public.investors i
+  on (
+    i.id = c.investor_id
+    or (
+      lower(i.email) = lower(c.investor_email)
+      and i.name = c.investor_name
+    )
+  )
+where n.certificate_id = c.id
+  and n.user_role in ('manager', 'general_manager', 'ceo')
+  and (n.action_path is null or n.action_path = '/investors');
 
 drop policy if exists "Certificate workflow can upload signatures" on storage.objects;
 
