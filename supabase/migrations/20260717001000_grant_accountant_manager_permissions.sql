@@ -223,6 +223,11 @@ where n.certificate_id = c.id
   and n.user_role in ('manager', 'general_manager', 'ceo')
   and (n.action_path is null or n.action_path = '/investors');
 
+update public.notifications
+set action_path = null
+where user_role in ('manager', 'general_manager', 'ceo')
+  and action_path = '/investors';
+
 drop policy if exists "Certificate workflow can upload signatures" on storage.objects;
 
 create policy "Certificate workflow can upload signatures"

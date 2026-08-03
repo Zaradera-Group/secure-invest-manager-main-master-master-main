@@ -937,6 +937,24 @@ export class CertificatesService {
     recipientEmail?: string;
     actionPath?: string | null;
   }) {
+    let actionPath = input.actionPath?.trim() || null;
+
+    if (actionPath === "/investors") {
+      actionPath = null;
+    }
+
+    if (!actionPath && input.userRole !== "investor") {
+      try {
+        const certificate = await this.getCertificate(input.certificateId);
+        actionPath = await this.getInvestorActionPath(certificate);
+      } catch (error) {
+        console.warn("[certificates.notifications] Failed to resolve investor action path", {
+          certificateId: input.certificateId,
+          message: error instanceof Error ? error.message : "Unexpected error",
+        });
+      }
+    }
+
     const { error } = await adminSupabase.from("notifications").insert({
       certificate_id: input.certificateId,
       title: "Certificate workflow update",
@@ -945,7 +963,7 @@ export class CertificatesService {
       user_role: input.userRole,
       recipient_user_id: input.recipientUserId ?? null,
       recipient_email: input.recipientEmail ?? null,
-      action_path: input.actionPath ?? null,
+      action_path: actionPath,
       is_read: false,
     });
 
@@ -1455,13 +1473,18 @@ export class CertificatesService {
     const { data, error } = await adminSupabase
       .from("investors")
       .select("id")
-      .eq("email", certificate.investor_email.trim().toLowerCase())
+      .ilike("email", certificate.investor_email.trim())
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (error || !data?.id) {
-      return "/investors";
+      console.warn("[certificates.notifications] Could not resolve investor detail path for certificate", {
+        certificateId: certificate.id,
+        investorId: certificate.investor_id,
+        investorEmail: certificate.investor_email,
+      });
+      return null;
     }
 
     return `/investors/${data.id}`;
