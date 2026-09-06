@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -32,11 +32,14 @@ const NEXT_OF_KIN_RELATIONSHIP_OPTIONS = [
   'Brother',
   'Uncle',
   'Aunt',
+  'Auntie',
   'Husband',
   'Wife',
+  'Spouse',
   'Cousin',
   'Son',
   'Daughter',
+  'Child',
   'Nephew',
   'Niece',
   'Grandfather',
@@ -47,10 +50,40 @@ const NEXT_OF_KIN_RELATIONSHIP_OPTIONS = [
 ] as const;
 const IDENTITY_VERIFICATION_ENABLED = import.meta.env.VITE_ENABLE_IDENTITY_VERIFICATION === 'true';
 
+type PublicIntakeRequest = {
+  id: string;
+  submitted_by_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  investor_category?: string | null;
+  category_reference_name?: string | null;
+  category_reference_email?: string | null;
+  category_notes?: string | null;
+  date_of_birth?: string | null;
+  gender?: string | null;
+  occupation?: string | null;
+  source_of_funds?: string | null;
+  address?: string | null;
+  next_of_kin_name?: string | null;
+  next_of_kin_phone?: string | null;
+  next_of_kin_relationship?: string | null;
+  currency_code?: string | null;
+  investment_amount?: number | null;
+  start_date?: string | null;
+  tenure?: number | null;
+  percentage?: number | null;
+  investment_type?: string | null;
+  client_account_number?: string | null;
+  client_bank?: string | null;
+  brought_by?: string | null;
+};
+
 export default function NewInvestment() {
   const { id } = useParams();
   const isEditMode = Boolean(id);
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const createInvestor = useCreateInvestor();
   const updateInvestor = useUpdateInvestor();
@@ -59,6 +92,8 @@ export default function NewInvestment() {
   const [isUploadingPassport, setIsUploadingPassport] = useState(false);
   const [isVerifyingNin, setIsVerifyingNin] = useState(false);
   const [isVerifyingBvn, setIsVerifyingBvn] = useState(false);
+  const appliedPublicIntakeIdRef = useRef<string | null>(null);
+  const hasManagerEditedFormRef = useRef(false);
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -91,6 +126,114 @@ export default function NewInvestment() {
     clientBank: '',
     broughtBy: '',
   });
+
+  const applyPublicIntakePrefill = (request: PublicIntakeRequest) => {
+    if (appliedPublicIntakeIdRef.current === request.id) return;
+
+    const isCurrencyCode = (value?: string | null): value is (typeof SUPPORTED_CURRENCIES)[number] =>
+      Boolean(value && SUPPORTED_CURRENCIES.includes(value as (typeof SUPPORTED_CURRENCIES)[number]));
+    const isGender = (value?: string | null): value is GenderType =>
+      value === 'Male' || value === 'Female' || value === 'Other';
+    const isInvestmentType = (value?: string | null): value is InvestmentType =>
+      value === 'Upfront' || value === 'Monthly' || value === 'Quarterly' || value === 'At Maturity';
+
+    const prefill = {
+      name: request.submitted_by_name ?? '',
+      email: request.email ?? '',
+      phone: request.phone ?? '',
+      investorCategory: (request.investor_category as InvestorCategory) || 'nw',
+      categoryReferenceName: request.category_reference_name ?? '',
+      categoryReferenceEmail: request.category_reference_email ?? '',
+      categoryNotes: request.category_notes ?? '',
+      dateOfBirth: request.date_of_birth ?? '',
+      gender: isGender(request.gender) ? request.gender : '',
+      occupation: request.occupation ?? '',
+      sourceOfFunds: request.source_of_funds ?? '',
+      address: request.address ?? '',
+      nextOfKinName: request.next_of_kin_name ?? '',
+      nextOfKinPhone: request.next_of_kin_phone ?? '',
+      nextOfKinRelationship: request.next_of_kin_relationship ?? '',
+      currencyCode: isCurrencyCode(request.currency_code) ? request.currency_code : 'NGN',
+      investmentAmount: request.investment_amount == null ? '' : String(request.investment_amount),
+      startDate: request.start_date ?? '',
+      tenure: request.tenure == null ? '' : String(request.tenure),
+      percentage: request.percentage == null ? '' : String(request.percentage),
+      investmentType: isInvestmentType(request.investment_type) ? request.investment_type : '',
+      clientAccountNumber: request.client_account_number ?? '',
+      clientBank: request.client_bank ?? '',
+      broughtBy: request.brought_by ?? 'Self',
+    };
+
+    setForm((current) => {
+      const next = { ...current };
+      for (const [field, value] of Object.entries(prefill)) {
+        const key = field as keyof typeof next;
+        if (!hasManagerEditedFormRef.current || !String(next[key] ?? '').trim()) {
+          next[key] = value as never;
+        }
+      }
+      return next;
+    });
+
+    appliedPublicIntakeIdRef.current = request.id;
+    toast({
+      title: 'Form autofilled',
+      description: 'Review the details before saving the investment.',
+    });
+  };
+
+  useEffect(() => {
+    if (isEditMode) return;
+
+    const stateRequest = (location.state as { publicIntakeRequest?: PublicIntakeRequest } | null)?.publicIntakeRequest;
+    if (stateRequest) {
+      applyPublicIntakePrefill(stateRequest);
+      return;
+    }
+
+    const intakeRequestId = searchParams.get('intakeRequestId');
+    if (!intakeRequestId || appliedPublicIntakeIdRef.current === intakeRequestId) return;
+
+    let isCancelled = false;
+
+    async function loadPublicIntakeRequest() {
+      try {
+        const { data, error } = await supabase
+          .from('public_intake_requests' as never)
+          .select('*')
+          .eq('id', intakeRequestId)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!data) {
+          toast({
+            title: 'Intake not found',
+            description: 'The public intake request could not be found.',
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        if (!isCancelled) {
+          applyPublicIntakePrefill(data as PublicIntakeRequest);
+        }
+      } catch (error) {
+        if (isCancelled) return;
+        toast({
+          title: 'Autofill failed',
+          description: error instanceof Error ? error.message : 'Could not load the public intake request.',
+          variant: 'destructive',
+        });
+      }
+    }
+
+    void loadPublicIntakeRequest();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isEditMode, location.state, searchParams, toast]);
 
   useEffect(() => {
     if (!existingInvestor) return;
@@ -147,6 +290,7 @@ export default function NewInvestment() {
     : '';
 
   const handleChange = (field: string, value: string) => {
+    hasManagerEditedFormRef.current = true;
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 

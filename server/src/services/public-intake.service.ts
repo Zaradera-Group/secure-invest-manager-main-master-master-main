@@ -23,7 +23,7 @@ const publicInvestorIntakeSchema = z.object({
   investmentAmount: z.coerce.number().positive(),
   startDate: z.string().min(1),
   tenure: z.coerce.number().int().positive(),
-  investmentType: z.enum(["Upfront", "Monthly", "Quarterly", "At Maturity"]),
+  investmentType: z.enum(["Monthly", "Quarterly", "At Maturity"]),
   clientAccountNumber: z.string().min(4),
   clientBank: z.string().min(2),
   broughtBy: z.string().optional().nullable(),

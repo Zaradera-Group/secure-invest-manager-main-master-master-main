@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Check, Copy, RefreshCw, Archive, XCircle, Trash2 } from 'lucide-react';
+import { Check, Copy, RefreshCw, Archive, XCircle, Trash2, FilePenLine } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -53,6 +54,7 @@ const statusOrder: IntakeStatus[] = ['submitted', 'reviewed', 'archived', 'rejec
 export default function PublicIntakeInbox() {
   const { role, user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [queryText, setQueryText] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | IntakeStatus>('all');
@@ -262,6 +264,15 @@ export default function PublicIntakeInbox() {
                   />
 
                   <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => navigate(`/investments/new?intakeRequestId=${request.id}`, {
+                        state: { publicIntakeRequest: request },
+                      })}
+                    >
+                      <FilePenLine className="w-4 h-4 mr-2" />
+                      Autofill main form
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"

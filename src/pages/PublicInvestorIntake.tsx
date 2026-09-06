@@ -30,7 +30,7 @@ function getCertificateApiUrl() {
   throw new Error('Public intake API URL is not configured. Set VITE_CERTIFICATE_API_URL in Netlify to your Render backend URL.');
 }
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
-const INVESTMENT_TYPES = ['Upfront', 'Monthly', 'Quarterly', 'At Maturity'] as const;
+const INVESTMENT_TYPES = ['Monthly', 'Quarterly', 'At Maturity'] as const;
 const CURRENCIES = ['NGN', 'USD', 'GBP', 'EUR'] as const;
 const NEXT_OF_KIN_RELATIONSHIPS = [
   'Father',
@@ -123,7 +123,11 @@ export default function PublicInvestorIntake() {
 
     try {
       const parsed = JSON.parse(draft) as Partial<typeof INITIAL_FORM>;
-      setForm((current) => ({ ...current, ...parsed }));
+      setForm((current) => ({
+        ...current,
+        ...parsed,
+        investmentType: parsed.investmentType === 'Upfront' ? INITIAL_FORM.investmentType : parsed.investmentType ?? current.investmentType,
+      }));
     } catch {
       globalThis.sessionStorage?.removeItem(PUBLIC_INTAKE_DRAFT_KEY);
     }
