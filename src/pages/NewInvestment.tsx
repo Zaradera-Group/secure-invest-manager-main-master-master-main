@@ -32,14 +32,11 @@ const NEXT_OF_KIN_RELATIONSHIP_OPTIONS = [
   'Brother',
   'Uncle',
   'Aunt',
-  'Auntie',
   'Husband',
   'Wife',
-  'Spouse',
   'Cousin',
   'Son',
   'Daughter',
-  'Child',
   'Nephew',
   'Niece',
   'Grandfather',
@@ -49,6 +46,18 @@ const NEXT_OF_KIN_RELATIONSHIP_OPTIONS = [
   'Other',
 ] as const;
 const IDENTITY_VERIFICATION_ENABLED = import.meta.env.VITE_ENABLE_IDENTITY_VERIFICATION === 'true';
+
+function normalizeNextOfKinRelationship(value?: string | null) {
+  const relationship = value?.trim();
+
+  if (!relationship) return '';
+  if (relationship === 'Auntie') return 'Aunt';
+  if (relationship === 'Spouse' || relationship === 'Child') return 'Other';
+
+  return NEXT_OF_KIN_RELATIONSHIP_OPTIONS.includes(relationship as (typeof NEXT_OF_KIN_RELATIONSHIP_OPTIONS)[number])
+    ? relationship
+    : 'Other';
+}
 
 type PublicIntakeRequest = {
   id: string;
@@ -152,7 +161,7 @@ export default function NewInvestment() {
       address: request.address ?? '',
       nextOfKinName: request.next_of_kin_name ?? '',
       nextOfKinPhone: request.next_of_kin_phone ?? '',
-      nextOfKinRelationship: request.next_of_kin_relationship ?? '',
+      nextOfKinRelationship: normalizeNextOfKinRelationship(request.next_of_kin_relationship),
       currencyCode: isCurrencyCode(request.currency_code) ? request.currency_code : 'NGN',
       investmentAmount: request.investment_amount == null ? '' : String(request.investment_amount),
       startDate: request.start_date ?? '',
