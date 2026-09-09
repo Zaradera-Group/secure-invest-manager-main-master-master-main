@@ -606,7 +606,11 @@ export function useCreateInvestor() {
           throw new Error('The investor form is sending a field that does not match your database schema.');
         }
 
-        throw error;
+        if (error.code === '23514') {
+          throw new Error(`The investor form contains a value the database does not allow: ${error.message}`);
+        }
+
+        throw new Error(error.message || 'Could not create the investor record.');
       }
       return data;
     },

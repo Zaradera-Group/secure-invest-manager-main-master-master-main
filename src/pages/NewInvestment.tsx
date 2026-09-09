@@ -429,10 +429,12 @@ export default function NewInvestment() {
       return;
     }
 
+    const normalizedNextOfKinRelationship = normalizeNextOfKinRelationship(form.nextOfKinRelationship);
+
     if (
-      form.nextOfKinRelationship
+      normalizedNextOfKinRelationship
       && !NEXT_OF_KIN_RELATIONSHIP_OPTIONS.includes(
-        form.nextOfKinRelationship as (typeof NEXT_OF_KIN_RELATIONSHIP_OPTIONS)[number],
+        normalizedNextOfKinRelationship as (typeof NEXT_OF_KIN_RELATIONSHIP_OPTIONS)[number],
       )
     ) {
       toast({
@@ -472,7 +474,7 @@ export default function NewInvestment() {
         address: form.address || null,
         next_of_kin_name: form.nextOfKinName || null,
         next_of_kin_phone: form.nextOfKinPhone || null,
-        next_of_kin_relationship: form.nextOfKinRelationship || null,
+        next_of_kin_relationship: normalizedNextOfKinRelationship || null,
         passport_photo_url: form.passportPhotoUrl || null,
         currency_code: form.currencyCode,
         nin_verification_status: form.ninVerificationStatus,
