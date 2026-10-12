@@ -51,7 +51,10 @@ export const requestPublicIntakeOtp = async (request: Request, response: Respons
     }
 
     const message = error instanceof Error ? error.message : "Unexpected error";
-    const status = message.includes("not configured") ? 503 : 500;
+    const status =
+      message.includes("not configured") || message.includes("No OTP delivery") || message.includes("Failed to deliver")
+        ? 503
+        : 500;
     response.status(status).json({ message });
   }
 };

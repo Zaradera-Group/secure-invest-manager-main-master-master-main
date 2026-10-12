@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { adminSupabase } from "../lib/supabase.js";
-import { sendPlainEmail } from "../lib/email.js";
+import { canSendEmail, sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
@@ -479,7 +479,7 @@ function assertConsentConfigured() {
 }
 
 function canSendPublicIntakeEmail() {
-  return Boolean(env.EMAIL_DELIVERY_ENABLED && env.RESEND_API_KEY && env.RESEND_FROM_EMAIL);
+  return canSendEmail();
 }
 
 function buildOtpEmailHtml(code: string) {

@@ -26,6 +26,8 @@ const fromEmail = env.SMTP_FROM_EMAIL ?? env.RESEND_FROM_EMAIL;
 const fromName = env.SMTP_FROM_NAME ?? "Zaradera Credit Limited";
 const fromAddress = fromEmail ? `"${fromName.replace(/"/g, '\\"')}" <${fromEmail}>` : undefined;
 
+export const canSendEmail = () => Boolean(env.EMAIL_DELIVERY_ENABLED && transporter && fromAddress);
+
 const sendEmail = async ({ email, subject, html }: EmailRecipient) => {
   if (!env.EMAIL_DELIVERY_ENABLED || !transporter || !fromAddress) {
     console.log(`[email] skipped delivery to ${email}: email delivery is disabled or not configured`);
