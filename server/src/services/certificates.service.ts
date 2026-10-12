@@ -8,6 +8,12 @@ import {
 } from "../lib/email.js";
 import { generateCertificatePdf, uploadCertificatePdf } from "../lib/pdf.js";
 import {
+  createSignedObjectUrl,
+  deleteObject,
+  downloadObject,
+  uploadObject,
+} from "../lib/storage.js";
+import {
   sendCeoNotificationSms,
   sendGeneralManagerNotificationSms,
   sendInvestorCertificateSms,
@@ -732,13 +738,7 @@ export class CertificatesService {
 
     const storagePath = await this.getCertificateStoragePath(certificate);
 
-    const { data, error } = await adminSupabase.storage
-      .from(env.CERTIFICATE_STORAGE_BUCKET)
-      .createSignedUrl(storagePath, 60 * 10);
-
-    if (error || !data?.signedUrl) {
-      throw new Error(`Failed to create certificate download url: ${error?.message ?? "Unknown error"}`);
-    }
+    const signedUrl = await createSignedObjectUrl(storagePath, 60 * 10);
 
     await insertAuditLog({
       action: "certificate_download_link_generated",
@@ -749,7 +749,7 @@ export class CertificatesService {
       targetEmail: certificate.investor_email,
     });
 
-    return { signedUrl: data.signedUrl };
+    return { signedUrl };
   }
 
   async getCertificatePdfFile(certificateId: string, actor: AuthenticatedUser) {
@@ -784,20 +784,28 @@ export class CertificatesService {
 
     const storagePath = await this.getCertificateStoragePath(certificate);
 
-    const { data, error } = await adminSupabase.storage
-      .from(env.CERTIFICATE_STORAGE_BUCKET)
-      .download(storagePath);
+    try {
+      const bytes = await downloadObject(storagePath);
+      await insertAuditLog({
+        action: "certificate_download_link_generated",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId,
+        targetEmail: certificate.investor_email,
+        metadata: {
+          deliveryMode: "direct_file",
+        },
+      });
 
-    if (error || !data) {
+      return {
+        fileName: `${certificate.investor_name.replace(/\s+/g, "-").toLowerCase()}-certificate.pdf`,
+        bytes,
+      };
+    } catch {
       certificate = await this.persistPdf(certificate);
       const retryPath = await this.getCertificateStoragePath(certificate);
-      const retry = await adminSupabase.storage
-        .from(env.CERTIFICATE_STORAGE_BUCKET)
-        .download(retryPath);
-
-      if (retry.error || !retry.data) {
-        throw new Error(`Failed to download certificate PDF: ${retry.error?.message ?? "Unknown error"}`);
-      }
+      const retryBytes = await downloadObject(retryPath);
 
       await insertAuditLog({
         action: "certificate_download_link_generated",
@@ -814,26 +822,9 @@ export class CertificatesService {
 
       return {
         fileName: `${certificate.investor_name.replace(/\s+/g, "-").toLowerCase()}-certificate.pdf`,
-        bytes: Buffer.from(await retry.data.arrayBuffer()),
+        bytes: retryBytes,
       };
     }
-
-    await insertAuditLog({
-      action: "certificate_download_link_generated",
-      actorUserId: actor.id,
-      actorEmail: actor.email,
-      actorRole: actor.role,
-      certificateId,
-      targetEmail: certificate.investor_email,
-      metadata: {
-        deliveryMode: "direct_file",
-      },
-    });
-
-    return {
-      fileName: `${certificate.investor_name.replace(/\s+/g, "-").toLowerCase()}-certificate.pdf`,
-      bytes: Buffer.from(await data.arrayBuffer()),
-    };
   }
 
   private async ensureCertificateFile(certificate: CertificateRecord) {
@@ -1101,27 +1092,22 @@ export class CertificatesService {
     const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
     const filePath = `signature-cache/${role}/${certificateId}-${Date.now()}.${extension}`;
 
-    const { error } = await adminSupabase.storage
-      .from(env.CERTIFICATE_STORAGE_BUCKET)
-      .upload(filePath, bytes, {
+    try {
+      const storagePath = await uploadObject({
+        path: filePath,
+        bytes,
         contentType,
-        upsert: true,
       });
 
-    if (error) {
+      return createSignedObjectUrl(storagePath, 60 * 60 * 24 * 7);
+    } catch (error) {
       console.warn("Failed to cache certificate signature for PDF rendering", {
         certificateId,
         role,
-        message: error.message,
+        message: error instanceof Error ? error.message : "Unknown error",
       });
       return signature;
     }
-
-    const { data } = await adminSupabase.storage
-      .from(env.CERTIFICATE_STORAGE_BUCKET)
-      .createSignedUrl(filePath, 60 * 60 * 24 * 7);
-
-    return data?.signedUrl ?? signature;
   }
 
   private async getInvestorSnapshot(
@@ -1280,14 +1266,12 @@ export class CertificatesService {
     }
 
     const normalizedPath = this.extractStoragePath(storagePath) ?? storagePath;
-    const { error } = await adminSupabase.storage
-      .from(env.CERTIFICATE_STORAGE_BUCKET)
-      .remove([normalizedPath]);
-
-    if (error) {
+    try {
+      await deleteObject(normalizedPath);
+    } catch (error) {
       console.warn("Failed to remove certificate artifact", {
         certificateId: certificate.id,
-        message: error.message,
+        message: error instanceof Error ? error.message : "Unknown error",
       });
     }
   }
@@ -1323,16 +1307,7 @@ export class CertificatesService {
 
   private async createInvestorCertificateEmailLink(certificate: CertificateRecord) {
     const storagePath = await this.getCertificateStoragePath(certificate);
-
-    const { data, error } = await adminSupabase.storage
-      .from(env.CERTIFICATE_STORAGE_BUCKET)
-      .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
-
-    if (error || !data?.signedUrl) {
-      throw new Error(`Failed to create investor certificate link: ${error?.message ?? "Unknown error"}`);
-    }
-
-    return data.signedUrl;
+    return createSignedObjectUrl(storagePath, 60 * 60 * 24 * 7);
   }
 
   private async getCertificateStoragePath(certificate: CertificateRecord): Promise<string> {

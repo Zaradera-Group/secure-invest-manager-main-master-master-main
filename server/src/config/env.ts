@@ -11,8 +11,29 @@ const envSchema = z.object({
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   SUPABASE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
+  MONGODB_URI: z.string().optional().transform((value) => value?.trim() || undefined),
+  MONGODB_DB_NAME: z.string().optional().transform((value) => value?.trim() || undefined),
   RESEND_API_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   RESEND_FROM_EMAIL: z
+    .string()
+    .optional()
+    .transform((value) => value?.trim() || undefined)
+    .pipe(z.string().email().optional()),
+  SMTP_HOST: z.string().optional().transform((value) => value?.trim() || undefined),
+  SMTP_PORT: z.coerce.number().int().positive().optional(),
+  SMTP_SECURE: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  SMTP_USER: z.string().optional().transform((value) => value?.trim() || undefined),
+  SMTP_PASS: z.string().optional().transform((value) => value?.trim() || undefined),
+  SMTP_FROM_EMAIL: z
+    .string()
+    .optional()
+    .transform((value) => value?.trim() || undefined)
+    .pipe(z.string().email().optional()),
+  SMTP_FROM_NAME: z.string().optional().transform((value) => value?.trim() || undefined),
+  EMAIL_REDIRECT_TO: z
     .string()
     .optional()
     .transform((value) => value?.trim() || undefined)
@@ -49,6 +70,18 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => value === true || value === "true"),
+  STORAGE_PROVIDER: z.enum(["supabase", "s3"]).default("supabase"),
+  S3_BUCKET: z.string().optional().transform((value) => value?.trim() || undefined),
+  S3_REGION: z.string().optional().transform((value) => value?.trim() || undefined),
+  S3_ACCESS_KEY_ID: z.string().optional().transform((value) => value?.trim() || undefined),
+  S3_SECRET_ACCESS_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
+  S3_PREFIX: z.string().optional().transform((value) => value?.trim().replace(/^\/+|\/+$/g, "") || undefined),
+  S3_SIGNED_URL_EXPIRES_SECONDS: z.coerce.number().int().positive().default(900),
+  STORAGE_HEALTH_CHECK_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  STORAGE_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
   CERTIFICATE_STORAGE_BUCKET: z.string().min(1).default("certificates"),
   CERTIFICATE_TEMPLATE_PATH: z.string().optional().transform((value) => value?.trim() || undefined),
 });

@@ -1,8 +1,6 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
 import type { CertificateRecord } from "../types/certificates.js";
-
-const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
 
 interface EmailRecipient {
   email: string;
@@ -10,17 +8,39 @@ interface EmailRecipient {
   html: string;
 }
 
+const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+
+const transporter = smtpConfigured
+  ? nodemailer.createTransport({
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT ?? (env.SMTP_SECURE ? 465 : 587),
+      secure: env.SMTP_SECURE,
+      auth: {
+        user: env.SMTP_USER,
+        pass: env.SMTP_PASS,
+      },
+    })
+  : null;
+
+const fromEmail = env.SMTP_FROM_EMAIL ?? env.RESEND_FROM_EMAIL;
+const fromName = env.SMTP_FROM_NAME ?? "Zaradera Credit Limited";
+const fromAddress = fromEmail ? `"${fromName.replace(/"/g, '\\"')}" <${fromEmail}>` : undefined;
+
 const sendEmail = async ({ email, subject, html }: EmailRecipient) => {
-  if (!env.EMAIL_DELIVERY_ENABLED || !resend || !env.RESEND_FROM_EMAIL) {
+  if (!env.EMAIL_DELIVERY_ENABLED || !transporter || !fromAddress) {
     console.log(`[email] skipped delivery to ${email}: email delivery is disabled or not configured`);
     return;
   }
 
-  await resend.emails.send({
-    from: env.RESEND_FROM_EMAIL,
-    to: email,
+  const recipients = env.EMAIL_REDIRECT_TO ?? email;
+
+  await transporter.sendMail({
+    from: fromAddress,
+    to: recipients,
     subject,
-    html,
+    html: env.EMAIL_REDIRECT_TO
+      ? `<p><strong>Original recipient:</strong> ${email}</p>${html}`
+      : html,
   });
 };
 

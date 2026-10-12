@@ -2,8 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib";
-import { adminSupabase } from "./supabase.js";
-import { env } from "../config/env.js";
+import { uploadObject } from "./storage.js";
 import type { AppRole, CertificateRecord, CertificateSignatoryNames } from "../types/certificates.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -619,16 +618,9 @@ export const uploadCertificatePdf = async (
 ): Promise<string> => {
   const filePath = `certificates/${certificateId}.pdf`;
 
-  const { error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
-    .upload(filePath, pdfBytes, {
-      contentType: "application/pdf",
-      upsert: true,
-    });
-
-  if (error) {
-    throw new Error(`Failed to upload certificate PDF: ${error.message}`);
-  }
-
-  return filePath;
+  return uploadObject({
+    path: filePath,
+    bytes: pdfBytes,
+    contentType: "application/pdf",
+  });
 };

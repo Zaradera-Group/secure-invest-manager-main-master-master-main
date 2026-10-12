@@ -3,6 +3,14 @@ import express from "express";
 import { authRouter } from "./routes/auth.js";
 import { certificatesRouter } from "./routes/certificates.js";
 import { investorsRouter } from "./routes/investors.js";
+import { env } from "./config/env.js";
+import {
+  createSignedObjectUrl,
+  deleteObject,
+  downloadObject,
+  uploadObject,
+} from "./lib/storage.js";
+import { checkMongoHealth, isMongoConfigured } from "./lib/mongodb.js";
 import { publicIntakeRouter } from "./routes/public-intake.js";
 
 export const app = express();
@@ -17,6 +25,57 @@ app.use(express.json({ limit: "10mb" }));
 
 app.get("/health", (_request, response) => {
   response.json({ status: "ok" });
+});
+
+app.get("/health/storage", async (request, response, next) => {
+  try {
+    if (!env.STORAGE_HEALTH_CHECK_ENABLED) {
+      response.status(404).json({ message: "Storage health check is disabled" });
+      return;
+    }
+
+    if (env.STORAGE_HEALTH_CHECK_TOKEN) {
+      const suppliedToken = request.header("x-health-check-token") ?? request.query.token;
+      if (suppliedToken !== env.STORAGE_HEALTH_CHECK_TOKEN) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    }
+
+    const path = `health-check/${Date.now()}-${Math.random().toString(36).slice(2)}.txt`;
+    const expectedText = `zaradera-storage-health-check:${new Date().toISOString()}`;
+    const storedPath = await uploadObject({
+      path,
+      bytes: Buffer.from(expectedText, "utf8"),
+      contentType: "text/plain; charset=utf-8",
+    });
+    const signedUrl = await createSignedObjectUrl(storedPath, 60);
+    const downloadedBytes = await downloadObject(storedPath);
+    await deleteObject(storedPath);
+
+    response.json({
+      status: "ok",
+      provider: env.STORAGE_PROVIDER,
+      path: storedPath,
+      signedUrlCreated: Boolean(signedUrl),
+      roundTripMatched: downloadedBytes.toString("utf8") === expectedText,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/health/mongodb", async (_request, response, next) => {
+  try {
+    if (!isMongoConfigured()) {
+      response.status(404).json({ message: "MongoDB is not configured" });
+      return;
+    }
+
+    response.json(await checkMongoHealth());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.use("/auth", authRouter);
