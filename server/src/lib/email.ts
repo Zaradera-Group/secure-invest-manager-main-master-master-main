@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { env } from "../config/env.js";
 import type { CertificateRecord } from "../types/certificates.js";
 
@@ -9,6 +10,8 @@ interface EmailRecipient {
 }
 
 const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+const resendConfigured = Boolean(env.RESEND_API_KEY);
+const emailProvider = env.EMAIL_PROVIDER;
 
 const transporter = smtpConfigured
   ? nodemailer.createTransport({
@@ -22,28 +25,58 @@ const transporter = smtpConfigured
     })
   : null;
 
-const fromEmail = env.SMTP_FROM_EMAIL ?? env.RESEND_FROM_EMAIL;
+const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
+
+const fromEmail =
+  emailProvider === "smtp"
+    ? env.SMTP_FROM_EMAIL ?? env.RESEND_FROM_EMAIL
+    : env.RESEND_FROM_EMAIL ?? env.SMTP_FROM_EMAIL;
 const fromName = env.SMTP_FROM_NAME ?? "Zaradera Credit Limited";
 const fromAddress = fromEmail ? `"${fromName.replace(/"/g, '\\"')}" <${fromEmail}>` : undefined;
 
-export const canSendEmail = () => Boolean(env.EMAIL_DELIVERY_ENABLED && transporter && fromAddress);
+export const canSendEmail = () => {
+  if (!env.EMAIL_DELIVERY_ENABLED || !fromAddress) {
+    return false;
+  }
+
+  if (emailProvider === "smtp") {
+    return Boolean(transporter);
+  }
+
+  return Boolean(resendConfigured && resend);
+};
 
 const sendEmail = async ({ email, subject, html }: EmailRecipient) => {
-  if (!env.EMAIL_DELIVERY_ENABLED || !transporter || !fromAddress) {
-    console.log(`[email] skipped delivery to ${email}: email delivery is disabled or not configured`);
+  if (!canSendEmail() || !fromAddress) {
+    console.log(`[email] skipped delivery to ${email}: ${emailProvider} delivery is disabled or not configured`);
     return;
   }
 
   const recipients = env.EMAIL_REDIRECT_TO ?? email;
+  const resolvedHtml = env.EMAIL_REDIRECT_TO
+    ? `<p><strong>Original recipient:</strong> ${email}</p>${html}`
+    : html;
 
-  await transporter.sendMail({
+  if (emailProvider === "smtp") {
+    await transporter!.sendMail({
+      from: fromAddress,
+      to: recipients,
+      subject,
+      html: resolvedHtml,
+    });
+    return;
+  }
+
+  const result = await resend!.emails.send({
     from: fromAddress,
     to: recipients,
     subject,
-    html: env.EMAIL_REDIRECT_TO
-      ? `<p><strong>Original recipient:</strong> ${email}</p>${html}`
-      : html,
+    html: resolvedHtml,
   });
+
+  if (result.error) {
+    throw new Error(`Resend email delivery failed: ${result.error.message}`);
+  }
 };
 
 export const sendPlainEmail = async (email: string, subject: string, html: string) => {

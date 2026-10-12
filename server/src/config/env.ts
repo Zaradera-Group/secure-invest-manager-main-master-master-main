@@ -13,6 +13,7 @@ const envSchema = z.object({
   SUPABASE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
   MONGODB_URI: z.string().optional().transform((value) => value?.trim() || undefined),
   MONGODB_DB_NAME: z.string().optional().transform((value) => value?.trim() || undefined),
+  EMAIL_PROVIDER: z.enum(["resend", "smtp"]).default("resend"),
   RESEND_API_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   RESEND_FROM_EMAIL: z
     .string()
