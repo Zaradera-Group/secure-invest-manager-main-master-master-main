@@ -677,7 +677,9 @@ export class CertificatesService {
 
     const refreshedCertificate = await this.persistPdf(certificate);
     const signedCertificateLink = await this.createInvestorCertificateEmailLink(refreshedCertificate);
-    await sendInvestorCertificateEmail(refreshedCertificate.investor_email, refreshedCertificate, signedCertificateLink);
+    await this.sendEmailSafely("investor certificate", () =>
+      sendInvestorCertificateEmail(refreshedCertificate.investor_email, refreshedCertificate, signedCertificateLink)
+    );
     const investorPhone = refreshedCertificate.investor_phone?.trim();
     if (investorPhone) {
       await this.sendSmsSafely("investor certificate", () =>
@@ -881,11 +883,15 @@ export class CertificatesService {
         }
 
         if (status === "pending_manager") {
-          await sendManagerNotificationEmail(recipient.email, certificate);
+          await this.sendEmailSafely("manager notification", () =>
+            sendManagerNotificationEmail(recipient.email!, certificate)
+          );
         } else if (status === "pending_general_manager") {
-          await sendGeneralManagerNotificationEmail(recipient.email, certificate);
+          await this.sendEmailSafely("general manager notification", () =>
+            sendGeneralManagerNotificationEmail(recipient.email!, certificate)
+          );
         } else {
-          await sendCeoNotificationEmail(recipient.email, certificate);
+          await this.sendEmailSafely("CEO notification", () => sendCeoNotificationEmail(recipient.email!, certificate));
         }
 
         if (!recipient.phone) {
@@ -968,6 +974,14 @@ export class CertificatesService {
       await action();
     } catch (error) {
       console.warn(`[certificates.sms] ${label} SMS failed:`, error);
+    }
+  }
+
+  private async sendEmailSafely(label: string, action: () => Promise<unknown>) {
+    try {
+      await action();
+    } catch (error) {
+      console.warn(`[certificates.email] ${label} email failed:`, error);
     }
   }
 
