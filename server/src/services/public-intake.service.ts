@@ -244,6 +244,13 @@ export async function sendPublicIntakeOtp(payload: unknown) {
   const deliveryResults = await Promise.allSettled(deliveryTasks);
   const failedDeliveries = deliveryResults.filter((result) => result.status === "rejected");
   if (failedDeliveries.length > 0) {
+    failedDeliveries.forEach((result) => {
+      if (result.status === "rejected") {
+        console.warn("[public-intake.otp] Email delivery failed", {
+          reason: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    });
     throw new Error("Failed to deliver verification code");
   }
 

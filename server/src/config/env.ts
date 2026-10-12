@@ -82,6 +82,11 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === true || value === "true"),
   STORAGE_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
+  EMAIL_HEALTH_CHECK_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  EMAIL_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
   CERTIFICATE_STORAGE_BUCKET: z.string().min(1).default("certificates"),
   CERTIFICATE_TEMPLATE_PATH: z.string().optional().transform((value) => value?.trim() || undefined),
 });

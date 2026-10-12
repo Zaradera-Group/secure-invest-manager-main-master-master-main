@@ -10,6 +10,7 @@ import {
   downloadObject,
   uploadObject,
 } from "./lib/storage.js";
+import { sendPlainEmail } from "./lib/email.js";
 import { checkMongoHealth, isMongoConfigured } from "./lib/mongodb.js";
 import { publicIntakeRouter } from "./routes/public-intake.js";
 
@@ -73,6 +74,46 @@ app.get("/health/mongodb", async (_request, response, next) => {
     }
 
     response.json(await checkMongoHealth());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/health/email", async (request, response, next) => {
+  try {
+    if (!env.EMAIL_HEALTH_CHECK_ENABLED) {
+      response.status(404).json({ message: "Email health check is disabled" });
+      return;
+    }
+
+    if (env.EMAIL_HEALTH_CHECK_TOKEN) {
+      const suppliedToken = request.header("x-health-check-token") ?? request.query.token;
+      if (suppliedToken !== env.EMAIL_HEALTH_CHECK_TOKEN) {
+        response.status(401).json({ message: "Unauthorized" });
+        return;
+      }
+    }
+
+    const recipient = typeof request.query.to === "string"
+      ? request.query.to.trim()
+      : env.EMAIL_REDIRECT_TO;
+
+    if (!recipient) {
+      response.status(400).json({ message: "Provide a test recipient with ?to=email@example.com or set EMAIL_REDIRECT_TO" });
+      return;
+    }
+
+    await sendPlainEmail(
+      recipient,
+      "Zaradera Vest email health check",
+      `<p>This confirms the Render backend can send email through the configured SMTP provider.</p><p>Sent at ${new Date().toISOString()}.</p>`,
+    );
+
+    response.json({
+      status: "ok",
+      recipient,
+      redirectedTo: env.EMAIL_REDIRECT_TO ?? null,
+    });
   } catch (error) {
     next(error);
   }
