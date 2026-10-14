@@ -45,3 +45,13 @@ export async function checkMongoHealth() {
     status: "ok",
   };
 }
+
+export async function closeMongoClient() {
+  if (!client) {
+    return;
+  }
+
+  await client.close();
+  client = null;
+  connecting = null;
+}

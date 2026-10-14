@@ -1,7 +1,14 @@
 import dotenv from "dotenv";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 dotenv.config();
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({
+  path: resolve(currentDir, "../../..", ".env"),
+});
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -66,6 +73,10 @@ const envSchema = z.object({
   PUBLIC_INTAKE_ASSIGNEE_USER_ID: z.string().optional().transform((value) => value?.trim() || undefined),
   PUBLIC_INTAKE_NOTIFY_EMAIL: z.string().optional().transform((value) => value?.trim() || undefined),
   PUBLIC_INTAKE_CONSENT_TOKEN_SECRET: z.string().optional().transform((value) => value?.trim() || undefined),
+  PUBLIC_INTAKE_MONGO_MIRROR_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => (value === undefined ? true : value === true || value === "true")),
   TURNSTILE_SECRET_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   TURNSTILE_TEST_MODE: z
     .union([z.string(), z.boolean()])

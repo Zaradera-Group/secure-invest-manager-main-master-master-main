@@ -4,6 +4,7 @@ import { canSendEmail, sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
+import { mirrorPublicIntakeRequestToMongoSafely } from "../repositories/public-intake.mongo.js";
 import {
   createOtpExpiryDate,
   generatePublicIntakeOtpCode,
@@ -123,6 +124,13 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
 
   const requestId = requestRecord.id as string;
   const submittedAt = new Date().toISOString();
+  mirrorPublicIntakeRequestToMongoSafely({
+    requestId,
+    intakeRecord,
+    requestRecord: requestRecord as Record<string, unknown>,
+    submittedAt,
+  });
+
   const notificationPayload = buildPublicIntakeNotificationPayload({
     investor: input,
     requestId,
