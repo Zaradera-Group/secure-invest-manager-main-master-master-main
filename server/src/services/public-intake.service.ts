@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
 import { mirrorPublicIntakeRequestToMongoSafely } from "../repositories/public-intake.mongo.js";
+import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import {
   createOtpExpiryDate,
   generatePublicIntakeOtpCode,
@@ -144,7 +145,7 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
 
   const notificationResults = await Promise.allSettled(
     internalRecipients.map(async (recipient) => {
-      await adminSupabase.from("notifications").insert({
+      const notification = {
         user_role: recipient.role,
         recipient_user_id: recipient.userId ?? null,
         recipient_email: recipient.email,
@@ -153,6 +154,17 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
         message: notificationPayload,
         action_path: "/public-intake-inbox",
         is_read: false,
+      };
+      const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
+
+      if (error || !data) {
+        throw new Error(`Failed to create dashboard notification: ${error?.message ?? "Unknown error"}`);
+      }
+
+      mirrorNotificationToMongoSafely({
+        notificationId: String(data.id),
+        notification: data as Record<string, unknown>,
+        createdAt: String(data.created_at ?? submittedAt),
       });
     }),
   );

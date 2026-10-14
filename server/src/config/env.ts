@@ -77,6 +77,10 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
+  NOTIFICATIONS_MONGO_MIRROR_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => (value === undefined ? true : value === true || value === "true")),
   TURNSTILE_SECRET_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   TURNSTILE_TEST_MODE: z
     .union([z.string(), z.boolean()])

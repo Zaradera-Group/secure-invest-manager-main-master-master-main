@@ -21,6 +21,7 @@ import {
 } from "../lib/sms.js";
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
+import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import {
   buildTransactionCertificateInput,
   shouldCreateTransactionCertificate,
@@ -952,7 +953,7 @@ export class CertificatesService {
       }
     }
 
-    const { error } = await adminSupabase.from("notifications").insert({
+    const notification = {
       certificate_id: input.certificateId,
       title: "Certificate workflow update",
       detail: input.message,
@@ -962,11 +963,18 @@ export class CertificatesService {
       recipient_email: input.recipientEmail ?? null,
       action_path: actionPath,
       is_read: false,
-    });
+    };
+    const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
 
-    if (error) {
-      throw new Error(`Failed to insert notification: ${error.message}`);
+    if (error || !data) {
+      throw new Error(`Failed to insert notification: ${error?.message ?? "Unknown error"}`);
     }
+
+    mirrorNotificationToMongoSafely({
+      notificationId: String(data.id),
+      notification: data as Record<string, unknown>,
+      createdAt: String(data.created_at ?? new Date().toISOString()),
+    });
   }
 
   private async sendSmsSafely(label: string, action: () => Promise<unknown>) {

@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "backfill:public-intake:mongo": "tsx scripts/backfill-public-intake-mongo.ts"
+    "backfill:public-intake:mongo": "tsx scripts/backfill-public-intake-mongo.ts",
+    "backfill:notifications:mongo": "tsx scripts/backfill-notifications-mongo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",
