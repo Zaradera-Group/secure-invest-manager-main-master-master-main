@@ -27,6 +27,11 @@ export const submitPublicInvestorIntake = async (request: Request, response: Res
     }
 
     const message = error instanceof Error ? error.message : "Unexpected error";
+    console.error("[public-intake.submit] Submission failed", {
+      message,
+      errorName: error instanceof Error ? error.name : typeof error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     const status =
       message.includes("not configured") || message.includes("temporarily unavailable")
         ? 503
