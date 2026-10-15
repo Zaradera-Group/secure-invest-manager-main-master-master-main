@@ -22,6 +22,7 @@ import {
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import { mirrorWorkflowRecordsToMongoSafely } from "../repositories/workflow-data.mongo.js";
 import {
   buildTransactionCertificateInput,
   shouldCreateTransactionCertificate,
@@ -410,6 +411,11 @@ export class CertificatesService {
     if (error || !data) {
       throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
     }
+
+    mirrorWorkflowRecordsToMongoSafely({
+      table: "investors",
+      records: [data as Record<string, unknown>],
+    });
 
     const shouldCreateTransactionCertificateFlag = shouldCreateTransactionCertificate(investorBeforeUpdate, input);
     const issueDate = shouldCreateTransactionCertificateFlag
@@ -1535,6 +1541,11 @@ export class CertificatesService {
     if (error || !data) {
       throw new Error(`Failed to update certificate: ${error?.message ?? "Unknown error"}`);
     }
+
+    mirrorWorkflowRecordsToMongoSafely({
+      table: "certificates",
+      records: [data as unknown as Record<string, unknown>],
+    });
 
     return data;
   }
