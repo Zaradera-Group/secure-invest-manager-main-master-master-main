@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { ZodError } from "zod";
 import { CertificatesService } from "../services/certificates.service.js";
 
 const service = new CertificatesService();
@@ -18,7 +19,9 @@ const getRouteParam = (value: string | string[] | undefined) => {
 const handleError = (response: Response, error: unknown) => {
   const message = error instanceof Error ? error.message : "Unexpected error";
   const status =
-    message === "Forbidden for current role"
+    error instanceof ZodError
+      ? 400
+      : message === "Forbidden for current role"
       || message.includes("can only")
       ? 403
       : message.includes("not found")
@@ -33,6 +36,15 @@ export const refreshInvestorCertificate = async (request: Request, response: Res
     const investorId = getRouteParam(request.params.id);
     const certificate = await service.refreshCertificateForInvestor(request.authUser!, investorId);
     response.json(certificate);
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const createInvestor = async (request: Request, response: Response) => {
+  try {
+    const investor = await service.createInvestor(request.authUser!, request.body);
+    response.status(201).json(investor);
   } catch (error) {
     handleError(response, error);
   }

@@ -592,27 +592,7 @@ export function useCreateInvestor() {
         throw new Error('Your account does not have an assigned role yet. Please sign out and sign back in after the role setup is complete.');
       }
 
-      const { data, error } = await supabase
-        .from('investors')
-        .insert({ ...investor, created_by: user.id })
-        .select()
-        .single();
-      if (error) {
-        if (error.code === '42501') {
-          throw new Error('Your account does not have permission to create investors yet. Please confirm your staff/admin role is present in Supabase.');
-        }
-
-        if (error.code === 'PGRST204' || error.code === '42703') {
-          throw new Error('The investor form is sending a field that does not match your database schema.');
-        }
-
-        if (error.code === '23514') {
-          throw new Error(`The investor form contains a value the database does not allow: ${error.message}`);
-        }
-
-        throw new Error(error.message || 'Could not create the investor record.');
-      }
-      return data;
+      return callInvestorBackend<InvestorRow>('/investors', 'POST', investor);
     },
     onSuccess: () => {
       invalidateInvestorRelatedQueries(queryClient, true);

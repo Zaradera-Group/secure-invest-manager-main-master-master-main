@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  createInvestor,
   deleteInvestorCompletely,
   refreshInvestorCertificate,
   updateInvestorAndRefreshCertificate,
@@ -9,6 +10,12 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 export const investorsRouter = Router();
 
 investorsRouter.use(requireAuth);
+
+investorsRouter.post(
+  "/",
+  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  createInvestor,
+);
 
 investorsRouter.post(
   "/:id/sync-certificate",

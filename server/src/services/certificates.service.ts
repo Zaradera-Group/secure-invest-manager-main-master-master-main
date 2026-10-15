@@ -89,6 +89,21 @@ const updateInvestorSchema = z.object({
   brought_by: z.string().optional().nullable(),
 });
 
+const createInvestorSchema = updateInvestorSchema.extend({
+  name: z.string().min(1),
+  email: z.string().email(),
+  phone: z.string().min(1),
+  investment_amount: z.coerce.number().nonnegative(),
+  start_date: z.string().min(1),
+  maturity_date: z.string().min(1),
+  tenure: z.coerce.number().int().nonnegative(),
+  percentage: z.coerce.number().nonnegative(),
+  investment_type: z.enum(["Upfront", "Monthly", "Quarterly", "At Maturity"]),
+  expected_maturity_amount: z.coerce.number().nonnegative(),
+  client_account_number: z.string().min(1),
+  client_bank: z.string().min(1),
+});
+
 const MIN_SIGNATURE_DATA_URL_LENGTH = 1500;
 
 const isMeaningfulSignature = (value: string) => {
@@ -191,6 +206,29 @@ const stageConfig: Record<
 const isManagerEquivalentRole = (role: AppRole) => role === "investment_manager" || role === "accountant";
 
 export class CertificatesService {
+  async createInvestor(actor: AuthenticatedUser, payload: unknown) {
+    const input = createInvestorSchema.parse(payload);
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .insert({
+        ...input,
+        created_by: actor.id,
+      })
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Failed to create investor: ${error?.message ?? "Unknown error"}`);
+    }
+
+    mirrorWorkflowRecordsToMongoSafely({
+      table: "investors",
+      records: [data as Record<string, unknown>],
+    });
+
+    return data;
+  }
+
   async getLatestCertificateForInvestor(
     actor: AuthenticatedUser,
     investorEmail: string,
