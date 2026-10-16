@@ -33,10 +33,15 @@ Enable **Authorization Core** RBAC for the test application so the Action below 
 1. Go to **Security > Multi-factor Auth** and enable an appropriate factor, preferably OTP with a mobile authenticator and recovery codes.
 2. Set the tenant policy to **Never**. The Action will selectively require MFA only for staff roles.
 3. Go to **Actions > Library > Build Custom**, choose **Login / Post Login**, and create `Zaradera Staff MFA and Roles`.
-4. Add this code, then deploy and add it to the **Login Flow**:
+4. In the Action's **Secrets** panel, add `ZARADERA_AUTH0_CLIENT_ID` with the Client ID of `Zaradera Vest Auth Test`. This value is not a client secret; it scopes the Action to this application only.
+5. Add this code, then deploy and add it to the **Login Flow**:
 
 ```js
 exports.onExecutePostLogin = async (event, api) => {
+  if (event.client.client_id !== event.secrets.ZARADERA_AUTH0_CLIENT_ID) {
+    return;
+  }
+
   const roles = event.authorization?.roles || [];
   const staffRoles = new Set([
     'investment_manager',
@@ -58,7 +63,7 @@ exports.onExecutePostLogin = async (event, api) => {
 };
 ```
 
-Do not use this Action in a production tenant until it has passed the test below.
+This Action exits immediately for other applications in the Auth0 tenant. Do not use it in a production tenant until it has passed the test below.
 
 ## 4. Configure Netlify's test environment
 

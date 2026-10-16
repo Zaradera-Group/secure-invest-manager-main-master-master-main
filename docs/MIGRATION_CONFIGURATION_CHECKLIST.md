@@ -52,7 +52,7 @@ This checklist prepares the Zaradera Vest platform for a controlled migration fr
 - [ ] Auth0 Authorization Core RBAC is enabled for the test application.
 - [ ] Email verification uses the branded Resend template.
 - [ ] Authenticator-app OTP and recovery codes are enabled.
-- [ ] The Post Login Action adds the namespaced role claim and requires MFA for staff roles.
+- [ ] The Post Login Action is scoped to the Zaradera Auth0 application Client ID, adds the namespaced role claim, and requires MFA for staff roles.
 - [ ] A custom Auth0 domain is configured only after the test setup is stable.
 
 ## 6. Netlify test configuration
