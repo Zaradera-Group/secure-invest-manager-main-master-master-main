@@ -18,6 +18,10 @@ const envSchema = z.object({
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   SUPABASE_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
+  AUTH_MODE: z.enum(["supabase", "dual", "auth0"]).default("supabase"),
+  AUTH0_ISSUER_BASE_URL: z.string().url().optional().transform((value) => value?.trim().replace(/\/+$/, "") || undefined),
+  AUTH0_AUDIENCE: z.string().optional().transform((value) => value?.trim() || undefined),
+  AUTH0_ROLES_CLAIM: z.string().default("https://zaraderavest.com/roles"),
   MONGODB_URI: z.string().optional().transform((value) => value?.trim() || undefined),
   MONGODB_DB_NAME: z.string().optional().transform((value) => value?.trim() || undefined),
   EMAIL_PROVIDER: z.enum(["resend", "smtp"]).default("resend"),
@@ -109,6 +113,26 @@ const envSchema = z.object({
   EMAIL_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
   CERTIFICATE_STORAGE_BUCKET: z.string().min(1).default("certificates"),
   CERTIFICATE_TEMPLATE_PATH: z.string().optional().transform((value) => value?.trim() || undefined),
+}).superRefine((value, context) => {
+  if (value.AUTH_MODE === "supabase") {
+    return;
+  }
+
+  if (!value.AUTH0_ISSUER_BASE_URL) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AUTH0_ISSUER_BASE_URL"],
+      message: "AUTH0_ISSUER_BASE_URL is required when AUTH_MODE is dual or auth0",
+    });
+  }
+
+  if (!value.AUTH0_AUDIENCE) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AUTH0_AUDIENCE"],
+      message: "AUTH0_AUDIENCE is required when AUTH_MODE is dual or auth0",
+    });
+  }
 });
 
 export const env = envSchema.parse(process.env);

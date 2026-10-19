@@ -25,6 +25,7 @@ import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import CertificatesList from "./pages/CertificatesList";
 import CertificateViewer from "./pages/CertificateViewer";
 import SettlementDiscrepancies from "./pages/SettlementDiscrepancies";
+import Auth0Test from "./pages/Auth0Test";
 import { useAuth } from "@/contexts/AuthContext";
 import { getDefaultDashboardPath } from "@/lib/authRoutes";
 
@@ -61,6 +62,7 @@ const AnimatedRoutes = () => {
         <Route path="/landing" element={<Landing />} />
         <Route path="/investor-intake" element={<PublicInvestorIntake />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/auth0-test" element={<Auth0Test />} />
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<RoleDashboardRedirect />} />
           <Route path="/manager-dashboard" element={<Navigate to="/dashboard" replace />} />
