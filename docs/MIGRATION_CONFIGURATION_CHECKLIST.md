@@ -65,6 +65,7 @@ VITE_AUTH0_TEST_DOMAIN=YOUR_AUTH0_TENANT_DOMAIN
 VITE_AUTH0_TEST_CLIENT_ID=YOUR_AUTH0_SPA_CLIENT_ID
 VITE_AUTH0_TEST_AUDIENCE=YOUR_AUTH0_API_IDENTIFIER
 VITE_AUTH0_TEST_ROLES_CLAIM=https://zaraderavest.com/roles
+VITE_CERTIFICATE_API_URL=YOUR_RENDER_BACKEND_URL
 ```
 
 - [ ] The test path is available at `/auth0-test`.
@@ -76,10 +77,10 @@ Do not enable Auth0 authentication on existing workflow routes until the isolate
 
 - [ ] Create an Auth0 API identifier, for example `https://api.zaraderavest.com`.
 - [ ] Record the Auth0 domain and API identifier as private Render values.
-- [ ] Add `AUTH_MODE=dual` only when Auth0 JWT validation middleware is ready.
+- [ ] Add `AUTH_MODE=dual`, `AUTH0_ISSUER_BASE_URL`, `AUTH0_AUDIENCE`, and `AUTH0_ROLES_CLAIM` only when Auth0 JWT validation middleware is ready.
 - [ ] Add a MongoDB `staff_accounts` collection that maps Auth0 `sub` values to active Zaradera staff records and roles.
 - [ ] Add Auth0 JWT signature, issuer, audience, and expiry validation in Render.
-- [ ] Add a read-only authenticated `/auth0/me` endpoint before enabling any certificate or investor write operation.
+- [ ] Validate Auth0 tokens against the read-only authenticated `/auth/me` endpoint before enabling any certificate or investor write operation.
 
 ## 8. Final testing and cutover
 

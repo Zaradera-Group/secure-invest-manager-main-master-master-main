@@ -47,4 +47,6 @@ export interface AuthenticatedUser {
   id: string;
   email: string;
   role: AppRole;
+  provider?: "supabase" | "auth0";
+  permissions?: string[];
 }

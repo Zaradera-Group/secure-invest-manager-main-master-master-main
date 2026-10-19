@@ -33,7 +33,7 @@ Enable **Authorization Core** RBAC for the test application so the Action below 
 1. Go to **Security > Multi-factor Auth** and enable an appropriate factor, preferably OTP with a mobile authenticator and recovery codes.
 2. Set the tenant policy to **Never**. The Action will selectively require MFA only for staff roles.
 3. Go to **Actions > Library > Build Custom**, choose **Login / Post Login**, and create `Zaradera Staff MFA and Roles`.
-4. In the Action's **Secrets** panel, add `ZARADERA_AUTH0_CLIENT_ID` with the Client ID of `Zaradera Vest Auth Test`. This value is not a client secret; it scopes the Action to this application only.
+4. In the Action's **Secrets** panel, add `ZARADERA_AUTH0_CLIENT_ID` with the Client ID of `Zaradera Vest Portal`. This value is not a client secret; it scopes the Action to this application only.
 5. Add this code, then deploy and add it to the **Login Flow**:
 
 ```js
@@ -73,13 +73,27 @@ Add the following Netlify environment variables for the test deployment. `VITE_`
 VITE_AUTH0_TEST_ENABLED=true
 VITE_AUTH0_TEST_DOMAIN=YOUR_AUTH0_TENANT_DOMAIN
 VITE_AUTH0_TEST_CLIENT_ID=YOUR_AUTH0_SPA_CLIENT_ID
-VITE_AUTH0_TEST_AUDIENCE=
+VITE_AUTH0_TEST_AUDIENCE=https://api.zaraderavest.com
 VITE_AUTH0_TEST_ROLES_CLAIM=https://zaraderavest.com/roles
+VITE_CERTIFICATE_API_URL=YOUR_RENDER_BACKEND_URL
 ```
 
-Redeploy the frontend after setting them. No Render variables or backend changes are required for this isolated path.
+Redeploy the frontend after setting them. `VITE_CERTIFICATE_API_URL` is used only by the read-only **Validate Render identity** button.
 
-## 5. Acceptance test
+## 5. Configure Render for dual authentication
+
+Add these private environment variables to the Render backend service. Do not use a `VITE_` prefix and do not add an Auth0 client secret.
+
+```text
+AUTH_MODE=dual
+AUTH0_ISSUER_BASE_URL=https://YOUR_AUTH0_TENANT_DOMAIN
+AUTH0_AUDIENCE=https://api.zaraderavest.com
+AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
+```
+
+`AUTH_MODE=dual` preserves the existing Supabase authentication flow. Auth0 tokens are accepted only by the read-only `/auth/me` readiness endpoint. Leave `AUTH_MODE=auth0` unset; it is reserved for a later, planned cutover.
+
+## 6. Acceptance test
 
 1. Create an Auth0 test user on the correct database connection and assign one staff role.
 2. Verify the user's email.

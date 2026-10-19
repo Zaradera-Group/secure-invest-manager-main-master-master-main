@@ -124,6 +124,7 @@ export const getUserFromBearerToken = async (token: string): Promise<Authenticat
     id: user.id,
     email: user.email ?? "",
     role,
+    provider: "supabase",
   };
 };
 

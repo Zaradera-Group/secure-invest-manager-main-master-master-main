@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import { LogIn, LogOut, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,9 +23,44 @@ export default function Auth0Test() {
 }
 
 function Auth0TestSession() {
-  const { error, isAuthenticated, isLoading, loginWithRedirect, logout, user } = useAuth0();
+  const { error, getAccessTokenSilently, isAuthenticated, isLoading, loginWithRedirect, logout, user } = useAuth0();
+  const [renderIdentity, setRenderIdentity] = useState<RenderIdentity | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
+  const [isCheckingRender, setIsCheckingRender] = useState(false);
   const roles = getRoles(user?.[auth0TestConfig.rolesClaim]);
   const isStaff = roles.some((role) => staffAuth0Roles.has(role));
+  const apiUrl = import.meta.env.VITE_CERTIFICATE_API_URL?.trim().replace(/\/+$/, '');
+
+  const validateRenderIdentity = async () => {
+    if (!apiUrl || !auth0TestConfig.audience) {
+      setRenderError('Render API URL or Auth0 audience is not configured for this deployment.');
+      return;
+    }
+
+    setIsCheckingRender(true);
+    setRenderError(null);
+
+    try {
+      const token = await getAccessTokenSilently({
+        authorizationParams: { audience: auth0TestConfig.audience },
+      });
+      const response = await fetch(`${apiUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => null) as RenderIdentity | { message?: string } | null;
+
+      if (!response.ok || !payload || !('provider' in payload)) {
+        throw new Error(payload && 'message' in payload ? payload.message ?? 'Render rejected the Auth0 token.' : 'Render rejected the Auth0 token.');
+      }
+
+      setRenderIdentity(payload);
+    } catch (validationError) {
+      setRenderIdentity(null);
+      setRenderError(validationError instanceof Error ? validationError.message : 'Unable to validate the Auth0 token with Render.');
+    } finally {
+      setIsCheckingRender(false);
+    }
+  };
 
   return (
     <main className="min-h-screen bg-background flex items-center justify-center p-6">
@@ -73,6 +109,16 @@ function Auth0TestSession() {
             <p className="text-xs leading-5 text-muted-foreground">
               A successful sign-in confirms authentication only. This test route cannot access live workflow data.
             </p>
+            <Button variant="outline" disabled={isCheckingRender} onClick={() => void validateRenderIdentity()}>
+              <ShieldCheck aria-hidden="true" />
+              {isCheckingRender ? 'Validating with Render...' : 'Validate Render identity'}
+            </Button>
+            {renderIdentity && (
+              <p className="border border-border bg-secondary/40 p-4 text-sm">
+                Render accepted this {renderIdentity.provider} identity as <strong>{renderIdentity.role}</strong>.
+              </p>
+            )}
+            {renderError && <p className="text-sm text-destructive">Render validation failed: {renderError}</p>}
             <Button variant="outline" onClick={() => void logout({ logoutParams: { returnTo: auth0TestConfig.redirectUri } })}>
               <LogOut aria-hidden="true" />
               Sign out of Auth0 test
@@ -85,6 +131,14 @@ function Auth0TestSession() {
     </main>
   );
 }
+
+type RenderIdentity = {
+  id: string;
+  email: string | null;
+  role: string;
+  provider: 'auth0' | 'supabase';
+  permissions: string[];
+};
 
 function getRoles(value: unknown): string[] {
   if (!Array.isArray(value)) {
