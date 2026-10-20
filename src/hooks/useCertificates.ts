@@ -465,27 +465,6 @@ export function usePendingApprovals(scope: DashboardScope = 'staff') {
   });
 }
 
-export function useUpdateAvailability() {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (isAvailable: boolean) => {
-      if (!user) throw new Error('Not authenticated');
-
-      const { error } = await supabase
-        .from('user_roles' as never)
-        .update({ is_available_for_approvals: isAvailable } as never)
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-roles'] });
-    },
-  });
-}
-
 function getEndpointPath(action: CertificateAction, certificateId?: string) {
   switch (action) {
     case 'generate':

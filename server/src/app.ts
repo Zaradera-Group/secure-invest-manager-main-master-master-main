@@ -16,6 +16,7 @@ import { publicIntakeRouter } from "./routes/public-intake.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { adminRouter } from "./routes/admin.js";
 import { announcementsRouter } from "./routes/announcements.js";
+import { settingsRouter } from "./routes/settings.js";
 
 export const app = express();
 
@@ -129,6 +130,7 @@ app.use("/certificates", certificatesRouter);
 app.use("/investors", investorsRouter);
 app.use("/notifications", notificationsRouter);
 app.use("/admin", adminRouter);
+app.use("/settings", settingsRouter);
 
 app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   response.status(500).json({

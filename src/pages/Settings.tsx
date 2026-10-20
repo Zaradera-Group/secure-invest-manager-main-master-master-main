@@ -10,11 +10,9 @@ import { Switch } from '@/components/ui/switch';
 import { Lock, Shield, Database, Bell, Plus, Trash2, Mail } from 'lucide-react';
 import { useAnnouncements, useCreateAnnouncement, useDeleteAnnouncement } from '@/hooks/useAnnouncements';
 import { useNotificationPreferences, useUpdateNotificationPreferences } from '@/hooks/useNotifications';
-import { useUpdateAvailability } from '@/hooks/useCertificates';
+import { useApprovalAvailability, useUpdateApprovalAvailability } from '@/hooks/useApprovalAvailability';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 
 export default function Settings() {
   const [announcementPage, setAnnouncementPage] = useState(0);
@@ -34,25 +32,11 @@ export default function Settings() {
   // Notification preferences
   const { data: notificationPrefs, isLoading: prefsLoading } = useNotificationPreferences();
   const updatePreferences = useUpdateNotificationPreferences();
-  const { role, user } = useAuth();
-  const updateAvailability = useUpdateAvailability();
+  const { role } = useAuth();
+  const isApprovalRole = role === 'investment_manager' || role === 'accountant' || role === 'general_manager';
+  const { data: approvalAvailability } = useApprovalAvailability(isApprovalRole);
+  const updateAvailability = useUpdateApprovalAvailability();
   const canManageAnnouncements = role === 'admin' || role === 'super_admin';
-
-  const { data: isAvailable } = useQuery({
-    queryKey: ['user-availability', user?.id, role],
-    enabled: !!user?.id && !!role && (role === 'investment_manager' || role === 'accountant' || role === 'general_manager'),
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('user_roles' as never)
-        .select('is_available_for_approvals')
-        .eq('user_id', user!.id)
-        .eq('role', role)
-        .single();
-
-      if (error) throw error;
-      return ((data as { is_available_for_approvals?: boolean } | null)?.is_available_for_approvals) ?? true;
-    },
-  });
 
   const getAnnouncementBadgeVariant = (status: string) => {
     if (status === 'urgent') return 'destructive' as const;
@@ -361,7 +345,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {(role === 'investment_manager' || role === 'accountant' || role === 'general_manager') && (
+      {isApprovalRole && (
         <Card className="glass-card">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-heading flex items-center gap-2">
@@ -376,7 +360,7 @@ export default function Settings() {
                 <p className="text-sm text-muted-foreground">Toggle to indicate if you are available to receive and process certificate approvals</p>
               </div>
               <Switch
-                checked={isAvailable ?? true}
+                checked={approvalAvailability?.available ?? true}
                 onCheckedChange={handleUpdateAvailability}
                 disabled={updateAvailability.isPending}
               />
