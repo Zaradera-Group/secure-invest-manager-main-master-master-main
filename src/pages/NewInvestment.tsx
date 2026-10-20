@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useCreateInvestor, useInvestor, useUpdateInvestor } from '@/hooks/useInvestors';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchPublicIntakeRequest, type PublicIntakeRequest } from '@/hooks/usePublicIntakeRequests';
 import type { Database } from '@/integrations/supabase/types';
 
 type GenderType = Database['public']['Enums']['gender_type'];
@@ -58,34 +59,6 @@ function normalizeNextOfKinRelationship(value?: string | null) {
     ? relationship
     : 'Other';
 }
-
-type PublicIntakeRequest = {
-  id: string;
-  submitted_by_name?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  investor_category?: string | null;
-  category_reference_name?: string | null;
-  category_reference_email?: string | null;
-  category_notes?: string | null;
-  date_of_birth?: string | null;
-  gender?: string | null;
-  occupation?: string | null;
-  source_of_funds?: string | null;
-  address?: string | null;
-  next_of_kin_name?: string | null;
-  next_of_kin_phone?: string | null;
-  next_of_kin_relationship?: string | null;
-  currency_code?: string | null;
-  investment_amount?: number | null;
-  start_date?: string | null;
-  tenure?: number | null;
-  percentage?: number | null;
-  investment_type?: string | null;
-  client_account_number?: string | null;
-  client_bank?: string | null;
-  brought_by?: string | null;
-};
 
 export default function NewInvestment() {
   const { id } = useParams();
@@ -207,25 +180,9 @@ export default function NewInvestment() {
 
     async function loadPublicIntakeRequest() {
       try {
-        const { data, error } = await supabase
-          .from('public_intake_requests' as never)
-          .select('*')
-          .eq('id', intakeRequestId)
-          .maybeSingle();
-
-        if (error) throw error;
-
-        if (!data) {
-          toast({
-            title: 'Intake not found',
-            description: 'The public intake request could not be found.',
-            variant: 'destructive',
-          });
-          return;
-        }
-
+        const data = await fetchPublicIntakeRequest(intakeRequestId);
         if (!isCancelled) {
-          applyPublicIntakePrefill(data as PublicIntakeRequest);
+          applyPublicIntakePrefill(data);
         }
       } catch (error) {
         if (isCancelled) return;

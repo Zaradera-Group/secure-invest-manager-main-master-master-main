@@ -4,7 +4,11 @@ import { canSendEmail, sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
-import { mirrorPublicIntakeRequestToMongoSafely } from "../repositories/public-intake.mongo.js";
+import {
+  deletePublicIntakeRequestFromMongoSafely,
+  mirrorPublicIntakeRequestToMongoSafely,
+} from "../repositories/public-intake.mongo.js";
+import type { AuthenticatedUser } from "../types/certificates.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import {
   createOtpExpiryDate,
@@ -55,6 +59,70 @@ type IntakeRequestContext = {
   ip?: string | null;
   userAgent?: string | null;
 };
+
+const intakeReviewSchema = z.object({
+  status: z.enum(["submitted", "reviewed", "archived", "rejected"]),
+  reviewNotes: z.string().trim().max(5_000).nullable().optional(),
+});
+
+export async function listPublicIntakeRequests() {
+  const { data, error } = await adminSupabase
+    .from("public_intake_requests")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(`Failed to fetch public intake requests: ${error.message}`);
+  return data ?? [];
+}
+
+export async function getPublicIntakeRequestForStaff(requestId: string) {
+  const { data, error } = await adminSupabase
+    .from("public_intake_requests")
+    .select("*")
+    .eq("id", requestId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to fetch public intake request: ${error.message}`);
+  if (!data) throw new Error("Public intake request not found");
+  return data;
+}
+
+export async function reviewPublicIntakeRequest(requestId: string, actor: AuthenticatedUser, input: unknown) {
+  const review = intakeReviewSchema.parse(input);
+  const { data, error } = await adminSupabase
+    .from("public_intake_requests")
+    .update({
+      status: review.status,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: actor.id,
+      review_notes: review.reviewNotes?.trim() || null,
+    })
+    .eq("id", requestId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to update public intake request: ${error.message}`);
+  if (!data) throw new Error("Public intake request not found");
+
+  mirrorPublicIntakeRequestToMongoSafely({
+    requestId,
+    intakeRecord: data as Record<string, unknown>,
+    requestRecord: data as Record<string, unknown>,
+    submittedAt: String(data.created_at ?? new Date().toISOString()),
+  });
+  return data;
+}
+
+export async function deletePublicIntakeRequest(requestId: string) {
+  const { error, count } = await adminSupabase
+    .from("public_intake_requests")
+    .delete({ count: "exact" })
+    .eq("id", requestId);
+
+  if (error) throw new Error(`Failed to delete public intake request: ${error.message}`);
+  if (!count) throw new Error("Public intake request not found");
+  deletePublicIntakeRequestFromMongoSafely(requestId);
+}
 
 export async function createPublicInvestorIntake(payload: unknown, context: IntakeRequestContext = {}) {
   const input = publicInvestorIntakeSchema.parse(payload);

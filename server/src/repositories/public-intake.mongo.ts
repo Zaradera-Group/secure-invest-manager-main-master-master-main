@@ -70,3 +70,16 @@ export function mirrorPublicIntakeRequestToMongoSafely(input: PublicIntakeMirror
     });
   });
 }
+
+export function deletePublicIntakeRequestFromMongoSafely(requestId: string) {
+  if (!env.PUBLIC_INTAKE_MONGO_MIRROR_ENABLED || !isMongoConfigured()) return;
+
+  void getMongoDb()
+    .then((db) => db.collection("public_intake_requests").deleteOne({ supabaseRequestId: requestId }))
+    .catch((error) => {
+      console.warn("[public-intake.mongo] Failed to remove mirrored intake request", {
+        requestId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+}

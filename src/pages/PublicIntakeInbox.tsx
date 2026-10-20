@@ -1,9 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Check, Copy, RefreshCw, Archive, XCircle, Trash2, FilePenLine } from 'lucide-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
+import {
+  type IntakeStatus,
+  type PublicIntakeRequest,
+  useDeletePublicIntakeRequest,
+  usePublicIntakeRequests,
+  useUpdatePublicIntakeRequest,
+} from '@/hooks/usePublicIntakeRequests';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,46 +18,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/format';
 
-type IntakeStatus = 'submitted' | 'reviewed' | 'archived' | 'rejected';
-
-type PublicIntakeRequest = {
-  id: string;
-  status: IntakeStatus;
-  submitted_by_name: string;
-  email: string;
-  phone: string;
-  date_of_birth?: string | null;
-  investment_amount: number;
-  start_date: string;
-  maturity_date: string;
-  tenure: number;
-  percentage?: number | null;
-  investment_type: string;
-  client_account_number: string;
-  client_bank: string;
-  brought_by?: string | null;
-  gender?: string | null;
-  address?: string | null;
-  currency_code?: string | null;
-  occupation?: string | null;
-  source_of_funds?: string | null;
-  next_of_kin_name?: string | null;
-  next_of_kin_phone?: string | null;
-  next_of_kin_relationship?: string | null;
-  investor_category?: string | null;
-  category_reference_name?: string | null;
-  category_reference_email?: string | null;
-  category_notes?: string | null;
-  assigned_email?: string | null;
-  review_notes?: string | null;
-  created_at: string;
-  reviewed_at?: string | null;
-};
-
 const statusOrder: IntakeStatus[] = ['submitted', 'reviewed', 'archived', 'rejected'];
 
 export default function PublicIntakeInbox() {
-  const { role, user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -61,35 +29,15 @@ export default function PublicIntakeInbox() {
   const [notesById, setNotesById] = useState<Record<string, string>>({});
   const [deleteTarget, setDeleteTarget] = useState<PublicIntakeRequest | null>(null);
 
-  const { data: requests = [], isLoading } = useQuery({
-    queryKey: ['public-intake-requests', role],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('public_intake_requests' as never)
-        .select('*')
-        .order('created_at', { ascending: false });
+  const { data: requests = [], isLoading } = usePublicIntakeRequests();
+  const updateStatus = useUpdatePublicIntakeRequest();
+  const deleteRequest = useDeletePublicIntakeRequest();
 
-      if (error) throw error;
-      return (data ?? []) as PublicIntakeRequest[];
-    },
-  });
-
-  const updateStatus = useMutation({
-    mutationFn: async (payload: { id: string; status: IntakeStatus }) => {
-      const { error } = await supabase
-        .from('public_intake_requests' as never)
-        .update({
-          status: payload.status,
-          reviewed_at: new Date().toISOString(),
-          reviewed_by: user?.id ?? null,
-          review_notes: notesById[payload.id]?.trim() || null,
-        } as never)
-        .eq('id', payload.id);
-
-      if (error) throw error;
-    },
+  const updateStatusWithFeedback = (payload: { id: string; status: IntakeStatus }) => updateStatus.mutate({
+    ...payload,
+    reviewNotes: notesById[payload.id],
+  }, {
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['public-intake-requests'] });
       toast({
         title: 'Updated',
         description: 'The intake request status was saved.',
@@ -104,17 +52,8 @@ export default function PublicIntakeInbox() {
     },
   });
 
-  const deleteRequest = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('public_intake_requests' as never)
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-    },
+  const deleteRequestWithFeedback = (id: string) => deleteRequest.mutate(id, {
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['public-intake-requests'] });
       setDeleteTarget(null);
       toast({
         title: 'Deleted',
@@ -283,7 +222,7 @@ export default function PublicIntakeInbox() {
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => updateStatus.mutate({ id: request.id, status: 'reviewed' })}
+                      onClick={() => updateStatusWithFeedback({ id: request.id, status: 'reviewed' })}
                       disabled={updateStatus.isPending}
                     >
                       <Check className="w-4 h-4 mr-2" />
@@ -292,7 +231,7 @@ export default function PublicIntakeInbox() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => updateStatus.mutate({ id: request.id, status: 'archived' })}
+                      onClick={() => updateStatusWithFeedback({ id: request.id, status: 'archived' })}
                       disabled={updateStatus.isPending}
                     >
                       <Archive className="w-4 h-4 mr-2" />
@@ -301,7 +240,7 @@ export default function PublicIntakeInbox() {
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => updateStatus.mutate({ id: request.id, status: 'rejected' })}
+                      onClick={() => updateStatusWithFeedback({ id: request.id, status: 'rejected' })}
                       disabled={updateStatus.isPending}
                     >
                       <XCircle className="w-4 h-4 mr-2" />
@@ -344,7 +283,7 @@ export default function PublicIntakeInbox() {
               variant="destructive"
               onClick={() => {
                 if (!deleteTarget) return;
-                void deleteRequest.mutateAsync(deleteTarget.id);
+                deleteRequestWithFeedback(deleteTarget.id);
               }}
               disabled={deleteRequest.isPending}
             >
