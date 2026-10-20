@@ -21,10 +21,13 @@ import {
 } from "../lib/sms.js";
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import {
   deleteWorkflowRecordsByFieldFromMongoSafely,
   deleteWorkflowRecordsFromMongoSafely,
+  getWorkflowRecordFromMongo,
+  listWorkflowRecordsFromMongo,
   mirrorWorkflowRecordsToMongoSafely,
 } from "../repositories/workflow-data.mongo.js";
 import {
@@ -232,6 +235,10 @@ type DashboardInvestorRow = {
   client_bank: string;
 };
 
+type InvestorReadRecord = Record<string, any> & {
+  creator: CreatorSummary | null;
+};
+
 const formatCreatorRoleLabel = (role: string | null | undefined) => {
   switch (role) {
     case "investment_manager":
@@ -254,24 +261,9 @@ const formatCreatorRoleLabel = (role: string | null | undefined) => {
 };
 
 export class CertificatesService {
-  async listInvestorsForRead(actor: AuthenticatedUser) {
+  async listInvestorsForRead(actor: AuthenticatedUser): Promise<InvestorReadRecord[]> {
     const isExecutive = actor.role === "admin" || actor.role === "super_admin";
-    let query = adminSupabase
-      .from("investors")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (!isExecutive) {
-      query = query.eq("created_by", actor.id);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      throw new Error(`Failed to fetch investors: ${error.message}`);
-    }
-
-    const investors = data ?? [];
+    const investors = (await this.readInvestors()).filter((investor) => isExecutive || investor.created_by === actor.id);
 
     if (!isExecutive) {
       return investors.map((investor) => ({ ...investor, creator: null }));
@@ -448,14 +440,10 @@ export class CertificatesService {
   }
 
   async getInvestorForRead(actor: AuthenticatedUser, investorId: string) {
-    const { data, error } = await adminSupabase
-      .from("investors")
-      .select("*")
-      .eq("id", investorId)
-      .maybeSingle();
+    const data = await this.readInvestor(investorId);
 
-    if (error || !data) {
-      throw new Error(`Investor not found: ${error?.message ?? investorId}`);
+    if (!data) {
+      throw new Error(`Investor not found: ${investorId}`);
     }
 
     const isExecutive = actor.role === "admin" || actor.role === "super_admin";
@@ -508,15 +496,7 @@ export class CertificatesService {
   }
 
   private async getDashboardInvestorsForRead(actor: AuthenticatedUser, scope: DashboardScope) {
-    const { data, error } = await adminSupabase
-      .from("investors")
-      .select("id,name,investment_amount,maturity_date,liquidation_status,investment_type,created_by,currency_code,expected_maturity_amount,client_bank");
-
-    if (error) {
-      throw new Error(`Failed to fetch dashboard investors: ${error.message}`);
-    }
-
-    const investors = (data ?? []) as DashboardInvestorRow[];
+    const investors = (await this.readInvestors()) as DashboardInvestorRow[];
     const isExecutive = actor.role === "admin" || actor.role === "super_admin";
 
     if (!isExecutive) {
@@ -532,6 +512,55 @@ export class CertificatesService {
     }
 
     return investors;
+  }
+
+  private async readInvestors(): Promise<Array<Record<string, any>>> {
+    if (env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        return await listWorkflowRecordsFromMongo("investors") as Array<Record<string, any>>;
+      } catch (error) {
+        console.warn("[workflow-data.mongo] MongoDB investor list read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch investors: ${error.message}`);
+    }
+
+    return (data ?? []) as Array<Record<string, any>>;
+  }
+
+  private async readInvestor(investorId: string): Promise<Record<string, any> | null> {
+    if (env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        const record = await getWorkflowRecordFromMongo("investors", investorId);
+        if (record) return record as Record<string, any>;
+      } catch (error) {
+        console.warn("[workflow-data.mongo] MongoDB investor detail read failed; falling back to Supabase", {
+          investorId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .select("*")
+      .eq("id", investorId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch investor: ${error.message}`);
+    }
+
+    return data as Record<string, any> | null;
   }
 
   async createInvestor(actor: AuthenticatedUser, payload: unknown) {

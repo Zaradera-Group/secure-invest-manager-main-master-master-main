@@ -1,7 +1,15 @@
 import { adminSupabase } from "../lib/supabase.js";
 import { env } from "../config/env.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
 import { z } from "zod";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
+import {
+  countUnreadDashboardNotificationsFromMongo,
+  listDashboardNotificationsFromMongo,
+  markNotificationReadInMongoSafely,
+  markNotificationsReadInMongoSafely,
+} from "../repositories/notifications.mongo.js";
+import type { NotificationReadFilter } from "../repositories/notifications.mongo.js";
 
 type WorkflowNotificationRole = "manager" | "general_manager" | "ceo" | "investor";
 type AuditTable =
@@ -211,6 +219,16 @@ export class NotificationsService {
   }
 
   async getDashboardNotifications(actor: AuthenticatedUser, limit: number) {
+    if (env.NOTIFICATIONS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        return await listDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor), limit);
+      } catch (error) {
+        console.warn("[notifications.mongo] MongoDB dashboard read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const { data, error } = await adminSupabase
       .from("notifications")
       .select("*")
@@ -226,6 +244,16 @@ export class NotificationsService {
   }
 
   async getUnreadDashboardNotificationCount(actor: AuthenticatedUser) {
+    if (env.NOTIFICATIONS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        return await countUnreadDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor));
+      } catch (error) {
+        console.warn("[notifications.mongo] MongoDB unread-count read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const { count, error } = await adminSupabase
       .from("notifications")
       .select("*", { count: "exact", head: true })
@@ -250,26 +278,32 @@ export class NotificationsService {
       throw new Error("Notification not found");
     }
 
+    const readAt = new Date().toISOString();
     const { error: updateError } = await adminSupabase
       .from("notifications")
-      .update({ is_read: true })
+      .update({ is_read: true, read_at: readAt })
       .eq("id", notificationId);
 
     if (updateError) {
       throw new Error(`Failed to mark notification as read: ${updateError.message}`);
     }
+
+    markNotificationReadInMongoSafely(notificationId, readAt);
   }
 
   async markAllDashboardNotificationsRead(actor: AuthenticatedUser) {
+    const readAt = new Date().toISOString();
     const { error } = await adminSupabase
       .from("notifications")
-      .update({ is_read: true })
+      .update({ is_read: true, read_at: readAt })
       .eq("is_read", false)
       .or(this.getDashboardNotificationFilter(actor));
 
     if (error) {
       throw new Error(`Failed to mark notifications as read: ${error.message}`);
     }
+
+    markNotificationsReadInMongoSafely(this.getMongoNotificationReadFilter(actor), readAt);
   }
 
   async getAuditRecords(table: AuditTable, orderColumn: string, page: number, pageSize: number) {
@@ -296,6 +330,14 @@ export class NotificationsService {
     }
 
     return `recipient_user_id.eq.${actor.id},user_role.eq.${notificationRole}`;
+  }
+
+  private getMongoNotificationReadFilter(actor: AuthenticatedUser): NotificationReadFilter {
+    return {
+      recipientUserId: actor.id,
+      recipientEmail: actor.email.toLowerCase(),
+      userRole: getWorkflowNotificationRole(actor.role),
+    };
   }
 
   private buildRetryUpdate(scheduledFor: string) {

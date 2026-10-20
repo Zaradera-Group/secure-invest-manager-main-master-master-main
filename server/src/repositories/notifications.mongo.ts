@@ -7,6 +7,22 @@ type NotificationMirrorInput = {
   createdAt?: string;
 };
 
+type MirroredNotificationDocument = {
+  rawSupabaseRecord?: Record<string, unknown>;
+};
+
+export type NotificationReadFilter = {
+  recipientUserId: string;
+  recipientEmail: string;
+  userRole: "manager" | "general_manager" | "ceo" | "investor";
+};
+
+const buildVisibilityFilter = (filter: NotificationReadFilter) => (
+  filter.userRole === "investor"
+    ? { $or: [{ recipientUserId: filter.recipientUserId }, { recipientEmail: filter.recipientEmail }] }
+    : { $or: [{ recipientUserId: filter.recipientUserId }, { userRole: filter.userRole }] }
+);
+
 let indexesReady: Promise<void> | null = null;
 
 async function ensureNotificationIndexes() {
@@ -98,4 +114,80 @@ export function mirrorNotificationToMongoSafely(input: NotificationMirrorInput) 
       reason: error instanceof Error ? error.message : String(error),
     });
   });
+}
+
+export function markNotificationReadInMongoSafely(notificationId: string, readAt: string) {
+  if (!env.NOTIFICATIONS_MONGO_MIRROR_ENABLED || !isMongoConfigured()) return;
+
+  void getMongoDb()
+    .then((db) => db.collection("notifications").updateOne(
+      { supabaseNotificationId: notificationId },
+      {
+        $set: {
+          isRead: true,
+          readAt,
+          "rawSupabaseRecord.is_read": true,
+          "rawSupabaseRecord.read_at": readAt,
+          mirroredAt: new Date().toISOString(),
+        },
+      },
+    ))
+    .catch((error) => {
+      console.warn("[notifications.mongo] Failed to mark mirrored notification as read", {
+        notificationId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+export function markNotificationsReadInMongoSafely(filter: NotificationReadFilter, readAt: string) {
+  if (!env.NOTIFICATIONS_MONGO_MIRROR_ENABLED || !isMongoConfigured()) return;
+
+  const visibilityFilter = buildVisibilityFilter(filter);
+
+  void getMongoDb()
+    .then((db) => db.collection("notifications").updateMany(
+      { ...visibilityFilter, isRead: false },
+      {
+        $set: {
+          isRead: true,
+          readAt,
+          "rawSupabaseRecord.is_read": true,
+          "rawSupabaseRecord.read_at": readAt,
+          mirroredAt: new Date().toISOString(),
+        },
+      },
+    ))
+    .catch((error) => {
+      console.warn("[notifications.mongo] Failed to mark mirrored notifications as read", {
+        recipientUserId: filter.recipientUserId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+export async function listDashboardNotificationsFromMongo(filter: NotificationReadFilter, limit: number) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const db = await getMongoDb();
+  const records = await db.collection<MirroredNotificationDocument>("notifications")
+    .find(buildVisibilityFilter(filter), { projection: { rawSupabaseRecord: 1 } })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+
+  return records.flatMap((record) => record.rawSupabaseRecord ? [record.rawSupabaseRecord] : []);
+}
+
+export async function countUnreadDashboardNotificationsFromMongo(filter: NotificationReadFilter) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const db = await getMongoDb();
+  return db.collection("notifications").countDocuments({ ...buildVisibilityFilter(filter), isRead: false });
 }

@@ -22,6 +22,11 @@ type WorkflowDeleteInput = {
   supabaseIds: string[];
 };
 
+type MirroredWorkflowDocument = {
+  supabaseId: string;
+  rawSupabaseRecord?: Record<string, unknown>;
+};
+
 const indexesReady = new Map<WorkflowMirrorTable, Promise<void>>();
 
 async function ensureIndexes(table: WorkflowMirrorTable) {
@@ -36,7 +41,7 @@ async function ensureIndexes(table: WorkflowMirrorTable) {
 function getTableIndexes(table: WorkflowMirrorTable, collection: Collection<Document>) {
   switch (table) {
     case "investors":
-      return [collection.createIndex({ email: 1 })];
+      return [collection.createIndex({ email: 1 }), collection.createIndex({ createdBy: 1, createdAt: -1 })];
     case "certificates":
     case "investor_certificates":
       return [collection.createIndex({ investorId: 1, createdAt: -1 }), collection.createIndex({ status: 1, createdAt: -1 })];
@@ -144,6 +149,42 @@ export function deleteWorkflowRecordsByFieldFromMongoSafely(
     });
 }
 
+export async function listWorkflowRecordsFromMongo(table: WorkflowMirrorTable) {
+  if (!isMongoConfigured()) {
+    throw new Error("MongoDB is not configured");
+  }
+
+  if (!indexesReady.has(table)) {
+    indexesReady.set(table, ensureIndexes(table));
+  }
+  await indexesReady.get(table);
+
+  const db = await getMongoDb();
+  const records = await db.collection<MirroredWorkflowDocument>(table)
+    .find({}, { projection: { rawSupabaseRecord: 1, supabaseId: 1 } })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  return records.flatMap((record) => record.rawSupabaseRecord ? [record.rawSupabaseRecord] : []);
+}
+
+export async function getWorkflowRecordFromMongo(table: WorkflowMirrorTable, supabaseId: string) {
+  if (!isMongoConfigured()) {
+    throw new Error("MongoDB is not configured");
+  }
+
+  if (!indexesReady.has(table)) {
+    indexesReady.set(table, ensureIndexes(table));
+  }
+  await indexesReady.get(table);
+
+  const db = await getMongoDb();
+  const record = await db.collection<MirroredWorkflowDocument>(table)
+    .findOne({ supabaseId }, { projection: { rawSupabaseRecord: 1 } });
+
+  return record?.rawSupabaseRecord ?? null;
+}
+
 function buildWorkflowDocument(table: WorkflowMirrorTable, record: Record<string, unknown>, mirroredAt: string) {
   return {
     supabaseId: record.id,
@@ -152,6 +193,7 @@ function buildWorkflowDocument(table: WorkflowMirrorTable, record: Record<string
     updatedAt: record.updated_at ?? null,
     mirroredAt,
     email: table === "investors" ? record.email ?? null : undefined,
+    createdBy: table === "investors" ? record.created_by ?? null : undefined,
     investorId: table === "certificates" || table === "investor_certificates" ? record.investor_id ?? null : undefined,
     certificateId: table === "certificate_approval_events" ? record.certificate_id ?? null : undefined,
     status: table === "certificates" || table === "investor_certificates" ? record.status ?? null : undefined,
