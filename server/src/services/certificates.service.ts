@@ -22,7 +22,11 @@ import {
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
-import { mirrorWorkflowRecordsToMongoSafely } from "../repositories/workflow-data.mongo.js";
+import {
+  deleteWorkflowRecordsByFieldFromMongoSafely,
+  deleteWorkflowRecordsFromMongoSafely,
+  mirrorWorkflowRecordsToMongoSafely,
+} from "../repositories/workflow-data.mongo.js";
 import {
   buildTransactionCertificateInput,
   shouldCreateTransactionCertificate,
@@ -725,6 +729,11 @@ export class CertificatesService {
 
     await adminSupabase.from("investor_certificates").delete().eq("investor_id", investor.id);
     await adminSupabase.from("investors").delete().eq("id", investor.id);
+
+    deleteWorkflowRecordsFromMongoSafely({ table: "investors", supabaseIds: [investor.id] });
+    deleteWorkflowRecordsFromMongoSafely({ table: "certificates", supabaseIds: certificateIds });
+    deleteWorkflowRecordsByFieldFromMongoSafely("certificate_approval_events", "certificateId", certificateIds);
+    deleteWorkflowRecordsByFieldFromMongoSafely("investor_certificates", "investorId", [investor.id]);
 
     await insertAuditLog({
       action: "investor_deleted_permanently",

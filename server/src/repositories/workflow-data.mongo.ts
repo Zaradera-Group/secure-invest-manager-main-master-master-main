@@ -17,6 +17,11 @@ type WorkflowMirrorInput = {
   records: Record<string, unknown>[];
 };
 
+type WorkflowDeleteInput = {
+  table: WorkflowMirrorTable;
+  supabaseIds: string[];
+};
+
 const indexesReady = new Map<WorkflowMirrorTable, Promise<void>>();
 
 async function ensureIndexes(table: WorkflowMirrorTable) {
@@ -94,6 +99,49 @@ export function mirrorWorkflowRecordsToMongoSafely(input: WorkflowMirrorInput) {
       reason: error instanceof Error ? error.message : String(error),
     });
   });
+}
+
+export function deleteWorkflowRecordsFromMongoSafely({ table, supabaseIds }: WorkflowDeleteInput) {
+  if (!env.WORKFLOW_DATA_MONGO_MIRROR_ENABLED || !isMongoConfigured()) {
+    return;
+  }
+
+  const ids = [...new Set(supabaseIds.filter(Boolean))];
+  if (!ids.length) return;
+
+  void getMongoDb()
+    .then((db) => db.collection(table).deleteMany({ supabaseId: { $in: ids } }))
+    .catch((error) => {
+      console.warn("[workflow-data.mongo] Failed to remove mirrored workflow records", {
+        table,
+        recordIds: ids,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+export function deleteWorkflowRecordsByFieldFromMongoSafely(
+  table: WorkflowMirrorTable,
+  field: "investorId" | "certificateId",
+  values: string[],
+) {
+  if (!env.WORKFLOW_DATA_MONGO_MIRROR_ENABLED || !isMongoConfigured()) {
+    return;
+  }
+
+  const identifiers = [...new Set(values.filter(Boolean))];
+  if (!identifiers.length) return;
+
+  void getMongoDb()
+    .then((db) => db.collection(table).deleteMany({ [field]: { $in: identifiers } }))
+    .catch((error) => {
+      console.warn("[workflow-data.mongo] Failed to remove related mirrored workflow records", {
+        table,
+        field,
+        values: identifiers,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
 }
 
 function buildWorkflowDocument(table: WorkflowMirrorTable, record: Record<string, unknown>, mirroredAt: string) {
