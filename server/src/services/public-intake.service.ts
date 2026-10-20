@@ -10,6 +10,13 @@ import {
   listPublicIntakeRequestsFromMongo,
   mirrorPublicIntakeRequestToMongoSafely,
 } from "../repositories/public-intake.mongo.js";
+import {
+  consumePublicIntakeOtpInMongo,
+  createPublicIntakeOtpInMongo,
+  getLatestActivePublicIntakeOtpFromMongo,
+  incrementPublicIntakeOtpAttemptInMongo,
+  type PublicIntakeOtpRecord,
+} from "../repositories/public-intake-otp.mongo.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
 import type { AuthenticatedUser } from "../types/certificates.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
@@ -317,24 +324,12 @@ export async function sendPublicIntakeOtp(payload: unknown) {
   const codeHash = hashPublicIntakeOtpCode(otpCode);
   const expiresAt = createOtpExpiryDate();
 
-  await adminSupabase
-    .from("public_intake_otp_codes")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("phone", codeTarget)
-    .is("consumed_at", null);
-
-  const { error: insertError } = await adminSupabase.from("public_intake_otp_codes").insert({
+  await storePublicIntakeOtp({
     phone: codeTarget,
     email: emailTarget,
-    code_hash: codeHash,
-    attempt_count: 0,
-    max_attempts: getOtpMaxAttempts(),
-    expires_at: expiresAt,
+    codeHash,
+    expiresAt,
   });
-
-  if (insertError) {
-    throw new Error(`Failed to create OTP record: ${insertError.message}`);
-  }
 
   const deliveryTasks: Promise<unknown>[] = [];
   const channels: string[] = [];
@@ -385,66 +380,138 @@ export async function verifyPublicIntakeOtp(payload: unknown) {
   assertConsentConfigured();
   const normalizedCode = normalizeOtp(input.code);
 
-  const { data: record, error } = await adminSupabase
-    .from("public_intake_otp_codes")
-    .select("*")
-    .eq("phone", codeTarget)
-    .is("consumed_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
+  const { record, storage } = await getActivePublicIntakeOtp(codeTarget);
 
   if (!record) {
     throw new Error("No active verification code was found");
   }
 
-  const typedRecord = record as {
-    id: string;
-    phone: string;
-    email: string | null;
-    code_hash: string;
-    attempt_count: number;
-    max_attempts: number;
-    expires_at: string;
-    consumed_at: string | null;
-    created_at: string;
-  };
-
-  if (isOtpExpired(typedRecord)) {
+  if (isOtpExpired(record)) {
     throw new Error("Verification code has expired");
   }
 
-  if (isOtpConsumed(typedRecord)) {
+  if (isOtpConsumed(record)) {
     throw new Error("Verification code has already been used");
   }
 
-  if (isOtpAttemptsExceeded(typedRecord)) {
+  if (isOtpAttemptsExceeded(record)) {
     throw new Error("Verification attempts exceeded");
   }
 
-  const matches = verifyPublicIntakeOtpCode(normalizedCode, typedRecord);
+  const matches = verifyPublicIntakeOtpCode(normalizedCode, record);
 
   if (!matches) {
-    await adminSupabase
-      .from("public_intake_otp_codes")
-      .update({ attempt_count: typedRecord.attempt_count + 1 })
-      .eq("id", typedRecord.id);
+    await incrementPublicIntakeOtpAttempt(record, storage);
     throw new Error("Verification failed");
   }
 
-  await adminSupabase
-    .from("public_intake_otp_codes")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("id", typedRecord.id);
+  const consumed = await consumePublicIntakeOtp(record, storage);
+  if (!consumed) {
+    throw new Error("Verification code has already been used");
+  }
 
   return {
     message: "Phone number verified",
     consentToken: createPublicIntakeConsentToken(codeTarget),
   };
+}
+
+type OtpStorage = "mongo" | "supabase";
+
+async function storePublicIntakeOtp(input: {
+  phone: string;
+  email: string | null;
+  codeHash: string;
+  expiresAt: string;
+}) {
+  if (env.PUBLIC_INTAKE_OTP_STORAGE_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      await createPublicIntakeOtpInMongo({
+        phone: input.phone,
+        email: input.email,
+        codeHash: input.codeHash,
+        maxAttempts: getOtpMaxAttempts(),
+        expiresAt: input.expiresAt,
+      });
+      return;
+    } catch (error) {
+      console.warn("[public-intake.otp] MongoDB OTP write failed; falling back to Supabase", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("phone", input.phone)
+    .is("consumed_at", null);
+
+  const { error } = await adminSupabase.from("public_intake_otp_codes").insert({
+    phone: input.phone,
+    email: input.email,
+    code_hash: input.codeHash,
+    attempt_count: 0,
+    max_attempts: getOtpMaxAttempts(),
+    expires_at: input.expiresAt,
+  });
+
+  if (error) {
+    throw new Error(`Failed to create OTP record: ${error.message}`);
+  }
+}
+
+async function getActivePublicIntakeOtp(phone: string): Promise<{ record: PublicIntakeOtpRecord | null; storage: OtpStorage }> {
+  if (env.PUBLIC_INTAKE_OTP_STORAGE_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      return { record: await getLatestActivePublicIntakeOtpFromMongo(phone), storage: "mongo" };
+    } catch (error) {
+      console.warn("[public-intake.otp] MongoDB OTP read failed; falling back to Supabase", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_otp_codes")
+    .select("*")
+    .eq("phone", phone)
+    .is("consumed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return { record: data as PublicIntakeOtpRecord | null, storage: "supabase" };
+}
+
+async function incrementPublicIntakeOtpAttempt(record: PublicIntakeOtpRecord, storage: OtpStorage) {
+  if (storage === "mongo") {
+    await incrementPublicIntakeOtpAttemptInMongo(record);
+    return;
+  }
+
+  await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ attempt_count: record.attempt_count + 1 })
+    .eq("id", record.id);
+}
+
+async function consumePublicIntakeOtp(record: PublicIntakeOtpRecord, storage: OtpStorage) {
+  if (storage === "mongo") {
+    return consumePublicIntakeOtpInMongo(record);
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("id", record.id)
+    .is("consumed_at", null)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data);
 }
 
 async function resolveAssigneeEmail(assigneeUserId: string, fallbackEmail?: string | null) {
