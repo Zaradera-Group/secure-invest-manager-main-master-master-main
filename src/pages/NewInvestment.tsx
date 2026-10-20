@@ -25,7 +25,9 @@ type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'failed';
 const MAX_CURRENCY_VALUE = 9_999_999_999_999.99;
 const MAX_PERCENTAGE_VALUE = 999.99;
 const MAX_TENURE_MONTHS = 1200;
+const MAX_PASSPORT_FILE_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_CURRENCIES = ['NGN', 'USD', 'GBP', 'EUR'] as const;
+const IDENTITY_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 const NEXT_OF_KIN_RELATIONSHIP_OPTIONS = [
   'Father',
   'Mother',
@@ -46,7 +48,6 @@ const NEXT_OF_KIN_RELATIONSHIP_OPTIONS = [
   'Friend',
   'Other',
 ] as const;
-const IDENTITY_VERIFICATION_ENABLED = import.meta.env.VITE_ENABLE_IDENTITY_VERIFICATION === 'true';
 
 function normalizeNextOfKinRelationship(value?: string | null) {
   const relationship = value?.trim();
@@ -72,8 +73,6 @@ export default function NewInvestment() {
   const { data: existingInvestor, isLoading: isInvestorLoading } = useInvestor(id);
   const { role } = useAuth();
   const [isUploadingPassport, setIsUploadingPassport] = useState(false);
-  const [isVerifyingNin, setIsVerifyingNin] = useState(false);
-  const [isVerifyingBvn, setIsVerifyingBvn] = useState(false);
   const appliedPublicIntakeIdRef = useRef<string | null>(null);
   const hasManagerEditedFormRef = useRef(false);
   const [form, setForm] = useState({
@@ -260,81 +259,43 @@ export default function NewInvestment() {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const verifyIdentity = async (documentType: 'nin' | 'bvn') => {
-    const value = documentType === 'nin' ? form.nin : form.bvn;
-
-    if (!value.trim()) {
-      toast({
-        title: `${documentType.toUpperCase()} required`,
-        description: `Enter a ${documentType.toUpperCase()} before running verification.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (documentType === 'nin') {
-      setIsVerifyingNin(true);
-    } else {
-      setIsVerifyingBvn(true);
-    }
-
-    try {
-      const { data, error } = await supabase.functions.invoke('verify-investor-identity', {
-        body: {
-          documentType,
-          value,
-          firstName: form.name.split(' ')[0] ?? '',
-          lastName: form.name.split(' ').slice(1).join(' '),
-          dob: form.dateOfBirth,
-        },
-      });
-
-      if (error) throw error;
-
-      const status = (data?.verified ? 'verified' : 'failed') as VerificationStatus;
-      setForm((prev) => ({
-        ...prev,
-        ninVerificationStatus: documentType === 'nin' ? status : prev.ninVerificationStatus,
-        bvnVerificationStatus: documentType === 'bvn' ? status : prev.bvnVerificationStatus,
-        verificationProvider: data?.provider ?? prev.verificationProvider,
-      }));
-
-      toast({
-        title: data?.verified ? `${documentType.toUpperCase()} verified` : `${documentType.toUpperCase()} not verified`,
-        description: data?.message ?? 'Verification completed.',
-        variant: data?.verified ? 'default' : 'destructive',
-      });
-    } catch (error) {
-      toast({
-        title: 'Verification failed',
-        description: error instanceof Error ? error.message : 'Could not complete verification.',
-        variant: 'destructive',
-      });
-    } finally {
-      if (documentType === 'nin') {
-        setIsVerifyingNin(false);
-      } else {
-        setIsVerifyingBvn(false);
-      }
-    }
-  };
-
   const handlePassportUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > MAX_PASSPORT_FILE_BYTES) {
+      toast({
+        title: 'Invalid passport image',
+        description: 'Use a JPG, PNG, or WebP image no larger than 5 MB.',
+        variant: 'destructive',
+      });
+      event.target.value = '';
+      return;
+    }
+
     setIsUploadingPassport(true);
     try {
-      const fileExt = file.name.split('.').pop();
-      const filePath = `${Date.now()}-${form.email || form.name || 'investor'}.${fileExt}`;
-      const { error: uploadError } = await supabase.storage
-        .from('investor-passports')
-        .upload(filePath, file, { upsert: true });
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!sessionData.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
 
-      if (uploadError) throw uploadError;
+      const dataBase64 = await readFileAsBase64(file);
+      const response = await fetch(`${IDENTITY_API_URL}/identity/passport`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionData.session.access_token}`,
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType: file.type,
+          dataBase64,
+        }),
+      });
+      const data = await response.json().catch(() => null) as { passportPhotoUrl?: string; message?: string } | null;
+      if (!response.ok || !data?.passportPhotoUrl) throw new Error(data?.message ?? 'Could not upload passport photograph.');
 
-      const { data } = supabase.storage.from('investor-passports').getPublicUrl(filePath);
-      setForm((prev) => ({ ...prev, passportPhotoUrl: data.publicUrl }));
+      setForm((prev) => ({ ...prev, passportPhotoUrl: data.passportPhotoUrl }));
       toast({
         title: 'Passport uploaded',
         description: 'The investor passport photograph has been uploaded successfully.',
@@ -602,26 +563,12 @@ export default function NewInvestment() {
           <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="nin">NIN</Label>
-              <div className="flex gap-2">
-                <Input id="nin" value={form.nin} onChange={(e) => handleChange('nin', e.target.value)} placeholder="National Identification Number" autoComplete="off" inputMode="numeric" />
-                {IDENTITY_VERIFICATION_ENABLED && (
-                  <Button type="button" variant="outline" onClick={() => verifyIdentity('nin')} disabled={isVerifyingNin}>
-                    {isVerifyingNin ? 'Verifying...' : 'Verify'}
-                  </Button>
-                )}
-              </div>
+              <Input id="nin" value={form.nin} onChange={(e) => handleChange('nin', e.target.value)} placeholder="National Identification Number" autoComplete="off" inputMode="numeric" />
               <p className="text-xs text-muted-foreground">Status: {form.ninVerificationStatus}</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="bvn">BVN</Label>
-              <div className="flex gap-2">
-                <Input id="bvn" value={form.bvn} onChange={(e) => handleChange('bvn', e.target.value)} placeholder="Bank Verification Number" autoComplete="off" inputMode="numeric" />
-                {IDENTITY_VERIFICATION_ENABLED && (
-                  <Button type="button" variant="outline" onClick={() => verifyIdentity('bvn')} disabled={isVerifyingBvn}>
-                    {isVerifyingBvn ? 'Verifying...' : 'Verify'}
-                  </Button>
-                )}
-              </div>
+              <Input id="bvn" value={form.bvn} onChange={(e) => handleChange('bvn', e.target.value)} placeholder="Bank Verification Number" autoComplete="off" inputMode="numeric" />
               <p className="text-xs text-muted-foreground">Status: {form.bvnVerificationStatus}</p>
             </div>
             <div className="space-y-2">
@@ -768,4 +715,21 @@ export default function NewInvestment() {
       </form>
     </motion.div>
   );
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read passport image.'));
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const base64 = result.includes(',') ? result.split(',', 2)[1] : '';
+      if (!base64) {
+        reject(new Error('Could not prepare passport image.'));
+        return;
+      }
+      resolve(base64);
+    };
+    reader.readAsDataURL(file);
+  });
 }

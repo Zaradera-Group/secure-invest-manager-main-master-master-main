@@ -18,6 +18,7 @@ import { adminRouter } from "./routes/admin.js";
 import { announcementsRouter } from "./routes/announcements.js";
 import { settingsRouter } from "./routes/settings.js";
 import { intakeRouter } from "./routes/intake.js";
+import { identityRouter } from "./routes/identity.js";
 
 export const app = express();
 
@@ -127,6 +128,7 @@ app.get("/health/email", async (request, response, next) => {
 app.use("/auth", authRouter);
 app.use("/public", publicIntakeRouter);
 app.use("/intake", intakeRouter);
+app.use("/identity", identityRouter);
 app.use("/announcements", announcementsRouter);
 app.use("/certificates", certificatesRouter);
 app.use("/investors", investorsRouter);

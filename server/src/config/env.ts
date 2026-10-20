@@ -112,6 +112,7 @@ const envSchema = z.object({
     .transform((value) => value === true || value === "true"),
   EMAIL_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
   CERTIFICATE_STORAGE_BUCKET: z.string().min(1).default("certificates"),
+  INVESTOR_PASSPORT_STORAGE_BUCKET: z.string().min(1).default("investor-passports"),
   CERTIFICATE_TEMPLATE_PATH: z.string().optional().transform((value) => value?.trim() || undefined),
 }).superRefine((value, context) => {
   if (value.AUTH_MODE === "supabase") {
