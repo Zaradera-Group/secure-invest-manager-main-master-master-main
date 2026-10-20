@@ -1,6 +1,7 @@
 import { env } from "../config/env.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
 import { adminSupabase } from "../lib/supabase.js";
+import { listRecentInvestorActivityFromMongo } from "../repositories/audit-logs.mongo.js";
 import { listStaffDirectoryFromMongo } from "../repositories/staff-directory.mongo.js";
 
 const formatRoleLabel = (role: string | null | undefined) => {
@@ -82,6 +83,16 @@ export class AdminService {
   }
 
   async getRecentInvestorActivity(limit: number) {
+    if (env.AUDIT_LOGS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        return await listRecentInvestorActivityFromMongo(limit);
+      } catch (error) {
+        console.warn("[audit-logs.mongo] Investor activity read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const { data, error } = await adminSupabase
       .from("audit_logs")
       .select("id, action, created_at, user_id, record_id, new_data, old_data")
