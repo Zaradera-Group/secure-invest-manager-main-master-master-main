@@ -10,6 +10,10 @@ import {
   markNotificationsReadInMongoSafely,
 } from "../repositories/notifications.mongo.js";
 import type { NotificationReadFilter } from "../repositories/notifications.mongo.js";
+import {
+  getNotificationPreferencesFromMongo,
+  mirrorNotificationPreferencesToMongoSafely,
+} from "../repositories/notification-preferences.mongo.js";
 
 type WorkflowNotificationRole = "manager" | "general_manager" | "ceo" | "investor";
 type AuditTable =
@@ -25,6 +29,17 @@ type DashboardNotificationRecord = {
   user_role: WorkflowNotificationRole;
   recipient_user_id: string | null;
   recipient_email: string | null;
+};
+
+type NotificationPreferencesRecord = Record<string, unknown> & {
+  id: string;
+  user_id: string;
+  email_enabled: boolean;
+  maturity_reminders: boolean;
+  payment_reminders: boolean;
+  monthly_reports: boolean;
+  birthday_notifications: boolean;
+  reminder_days_before: number[];
 };
 
 const notificationPreferencesSchema = z.object({
@@ -178,6 +193,18 @@ export class NotificationsService {
   }
 
   async getNotificationPreferences(actor: AuthenticatedUser) {
+    if (env.NOTIFICATION_PREFERENCES_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        const preferences = await getNotificationPreferencesFromMongo(actor.id);
+        if (preferences) return preferences as NotificationPreferencesRecord;
+      } catch (error) {
+        console.warn("[notification-preferences.mongo] Read failed; falling back to Supabase", {
+          userId: actor.id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const { data, error } = await adminSupabase
       .from("notification_preferences")
       .select("*")
@@ -188,7 +215,7 @@ export class NotificationsService {
       throw new Error(`Failed to fetch notification preferences: ${error.message}`);
     }
 
-    return data;
+    return data as NotificationPreferencesRecord | null;
   }
 
   async updateNotificationPreferences(actor: AuthenticatedUser, payload: unknown) {
@@ -215,7 +242,9 @@ export class NotificationsService {
       throw new Error(`Failed to update notification preferences: ${error?.message ?? "Unknown error"}`);
     }
 
-    return data;
+    const preferences = data as NotificationPreferencesRecord;
+    mirrorNotificationPreferencesToMongoSafely(preferences);
+    return preferences;
   }
 
   async getDashboardNotifications(actor: AuthenticatedUser, limit: number) {
