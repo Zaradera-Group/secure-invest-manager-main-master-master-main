@@ -50,6 +50,16 @@ export const createInvestor = async (request: Request, response: Response) => {
   }
 };
 
+export const getInvestor = async (request: Request, response: Response) => {
+  try {
+    const investorId = getRouteParam(request.params.id);
+    const investor = await service.getInvestorForRead(investorId);
+    response.json(investor);
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
 export const updateInvestorAndRefreshCertificate = async (request: Request, response: Response) => {
   try {
     const investorId = getRouteParam(request.params.id);

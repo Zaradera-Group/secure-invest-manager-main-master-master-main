@@ -176,7 +176,7 @@ async function getAuthenticatedBackendToken() {
 
 async function callInvestorBackend<T>(
   path: string,
-  method: 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   body?: unknown,
 ) {
   const token = await getAuthenticatedBackendToken();
@@ -557,21 +557,7 @@ export function useInvestor(id: string | undefined) {
     queryKey: ['investors', id, role, user?.id],
     enabled: !!id,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('investors')
-        .select(SELECTED_COLUMNS)
-        .eq('id', id)
-        .maybeSingle();
-
-      if (error) {
-        throw error;
-      }
-
-      if (!data) {
-        throw new Error('Investor not found.');
-      }
-
-      return data as InvestorRow;
+      return callInvestorBackend<InvestorRow>(`/investors/${id}`, 'GET');
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000,

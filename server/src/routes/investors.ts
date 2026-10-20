@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createInvestor,
   deleteInvestorCompletely,
+  getInvestor,
   refreshInvestorCertificate,
   updateInvestorAndRefreshCertificate,
 } from "../controllers/investors.controller.js";
@@ -15,6 +16,12 @@ investorsRouter.post(
   "/",
   requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
   createInvestor,
+);
+
+investorsRouter.get(
+  "/:id",
+  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  getInvestor,
 );
 
 investorsRouter.post(

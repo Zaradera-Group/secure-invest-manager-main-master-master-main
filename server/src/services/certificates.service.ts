@@ -206,6 +206,20 @@ const stageConfig: Record<
 const isManagerEquivalentRole = (role: AppRole) => role === "investment_manager" || role === "accountant";
 
 export class CertificatesService {
+  async getInvestorForRead(investorId: string) {
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .select("*")
+      .eq("id", investorId)
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new Error(`Investor not found: ${error?.message ?? investorId}`);
+    }
+
+    return data;
+  }
+
   async createInvestor(actor: AuthenticatedUser, payload: unknown) {
     const input = createInvestorSchema.parse(payload);
     const { data, error } = await adminSupabase
