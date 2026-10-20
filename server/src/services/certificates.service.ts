@@ -286,6 +286,36 @@ export class CertificatesService {
     }));
   }
 
+  async getCertificateInbox(actor: AuthenticatedUser, scope: DashboardScope, limit: number) {
+    const certificates = await this.listCertificateInboxRows(actor, scope, limit);
+    const investors = await this.listInvestorsForRead(actor);
+    const investorsById = new Map(investors.map((investor) => [investor.id, investor]));
+    const investorsByEmailAndName = new Map(
+      investors.map((investor) => [`${String(investor.email).toLowerCase()}::${investor.name}`, investor]),
+    );
+
+    return certificates.map((certificate) => {
+      const matchedInvestor = (certificate.investor_id ? investorsById.get(certificate.investor_id) : undefined)
+        ?? investorsByEmailAndName.get(`${certificate.investor_email.toLowerCase()}::${certificate.investor_name}`);
+
+      return {
+        certificate,
+        investor: {
+          id: matchedInvestor?.id,
+          name: certificate.investor_name,
+          email: certificate.investor_email,
+          category: matchedInvestor?.investor_category ?? null,
+        },
+        nextActionLabel: this.getInboxActionLabel(actor.role, certificate),
+        href: matchedInvestor?.id ? `/investors/${matchedInvestor.id}` : "/certificates",
+      };
+    });
+  }
+
+  async getPendingApprovalCount(actor: AuthenticatedUser, scope: DashboardScope) {
+    return (await this.listCertificateInboxRows(actor, scope)).length;
+  }
+
   async getDashboardPortfolioSummary(actor: AuthenticatedUser, scope: DashboardScope) {
     const investors = await this.getDashboardInvestorsForRead(actor, scope);
     const now = new Date();
@@ -1124,6 +1154,57 @@ export class CertificatesService {
 
   private async ensureCertificateFile(certificate: CertificateRecord) {
     return this.persistPdf(certificate);
+  }
+
+  private async listCertificateInboxRows(actor: AuthenticatedUser, scope: DashboardScope, limit?: number) {
+    const statuses = this.getInboxStatuses(actor.role);
+    if (statuses.length === 0) return [] as CertificateRecord[];
+
+    let query = adminSupabase
+      .from("certificates")
+      .select("*")
+      .in("status", statuses)
+      .order("created_at", { ascending: false });
+
+    if (actor.role === "admin" || actor.role === "super_admin") {
+      query = scope === "executive"
+        ? query.eq("created_by", actor.id)
+        : scope === "staff"
+          ? query.neq("created_by", actor.id)
+          : query;
+    }
+
+    if (limit !== undefined) query = query.limit(limit);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Failed to fetch certificate inbox: ${error.message}`);
+
+    return ((data ?? []) as CertificateRecord[]).filter((certificate) => {
+      if (isManagerEquivalentRole(actor.role)) {
+        return certificate.status === "pending_manager" || certificate.status === "approved" || certificate.created_by === actor.id;
+      }
+      if (actor.role === "general_manager") {
+        return certificate.status === "pending_general_manager" || certificate.created_by === actor.id;
+      }
+      return true;
+    });
+  }
+
+  private getInboxStatuses(role: AppRole): CertificateStatus[] {
+    if (isManagerEquivalentRole(role)) return ["pending_manager", "approved"];
+    if (role === "general_manager") return ["pending_general_manager", "approved"];
+    if (role === "admin") return ["pending_manager", "pending_general_manager", "pending_ceo", "approved"];
+    return role === "super_admin" ? ["pending_ceo"] : [];
+  }
+
+  private getInboxActionLabel(role: AppRole, certificate: CertificateRecord) {
+    if (isManagerEquivalentRole(role) && certificate.status === "pending_manager") return "Review and sign";
+    if (role === "admin" && certificate.status === "pending_manager") return "Sign as Investment Manager";
+    if ((isManagerEquivalentRole(role) || role === "admin" || role === "general_manager") && certificate.status === "approved") return "Send to investor";
+    if (role === "general_manager" && certificate.status === "pending_general_manager") return "Approve and sign";
+    if (role === "admin" && certificate.status === "pending_general_manager") return "Sign as General Manager";
+    if ((role === "admin" || role === "super_admin") && certificate.status === "pending_ceo") return "Final approval";
+    return "Review certificate";
   }
 
   private assertCertificateRenderable(certificate: CertificateRecord) {

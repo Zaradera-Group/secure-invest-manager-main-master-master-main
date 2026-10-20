@@ -4,7 +4,9 @@ import {
   createCertificate,
   getCertificateFile,
   getCertificateDownloadUrl,
+  getCertificateInbox,
   getLatestCertificateByInvestor,
+  getPendingApprovalCount,
   generalManagerApprove,
   managerApprove,
   sendCertificate,
@@ -15,6 +17,8 @@ export const certificatesRouter = Router();
 
 certificatesRouter.use(requireAuth);
 
+certificatesRouter.get("/inbox", requireRole("investment_manager", "accountant", "general_manager", "super_admin", "admin"), getCertificateInbox);
+certificatesRouter.get("/pending-approval-count", requireRole("investment_manager", "accountant", "general_manager", "super_admin", "admin"), getPendingApprovalCount);
 certificatesRouter.get("/by-investor", requireRole("investment_manager", "accountant", "general_manager", "super_admin", "admin"), getLatestCertificateByInvestor);
 certificatesRouter.post("/create", requireRole("investment_manager", "accountant", "super_admin", "admin"), createCertificate);
 certificatesRouter.post("/:id/manager-approve", requireRole("investment_manager", "accountant", "admin"), managerApprove);
