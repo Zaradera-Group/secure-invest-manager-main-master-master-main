@@ -21,7 +21,9 @@
     "backfill:security-audit:mongo": "tsx scripts/backfill-security-audit-mongo.ts",
     "audit:security-audit:mongo": "tsx scripts/audit-security-audit-mongo.ts",
     "backfill:audit-logs:mongo": "tsx scripts/backfill-audit-logs-mongo.ts",
-    "audit:audit-logs:mongo": "tsx scripts/audit-audit-logs-mongo.ts"
+    "audit:audit-logs:mongo": "tsx scripts/audit-audit-logs-mongo.ts",
+    "backfill:notification-audit:mongo": "tsx scripts/backfill-notification-audit-mongo.ts",
+    "audit:notification-audit:mongo": "tsx scripts/audit-notification-audit-mongo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",

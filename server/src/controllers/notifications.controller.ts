@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
 import { NotificationsService } from "../services/notifications.service.js";
+import type { NotificationAuditTable } from "../repositories/notification-audit.mongo.js";
 
 const service = new NotificationsService();
 
@@ -79,7 +80,7 @@ export const markAllDashboardNotificationsRead = async (request: Request, respon
   }
 };
 
-const getAuditRecords = (table: Parameters<NotificationsService["getAuditRecords"]>[0], orderColumn: string) =>
+const getAuditRecords = (table: NotificationAuditTable, orderColumn: string) =>
   async (request: Request, response: Response) => {
     try {
       const page = getBoundedInteger(request.query.page, 0, 10_000);

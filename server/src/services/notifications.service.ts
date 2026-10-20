@@ -14,16 +14,12 @@ import {
   getNotificationPreferencesFromMongo,
   mirrorNotificationPreferencesToMongoSafely,
 } from "../repositories/notification-preferences.mongo.js";
+import {
+  listNotificationAuditRecordsFromMongo,
+  type NotificationAuditTable,
+} from "../repositories/notification-audit.mongo.js";
 
 type WorkflowNotificationRole = "manager" | "general_manager" | "ceo" | "investor";
-type AuditTable =
-  | "email_notifications"
-  | "notification_jobs"
-  | "job_runs"
-  | "email_notifications_archive"
-  | "notification_jobs_archive"
-  | "job_runs_archive";
-
 type DashboardNotificationRecord = {
   id: string;
   user_role: WorkflowNotificationRole;
@@ -335,7 +331,18 @@ export class NotificationsService {
     markNotificationsReadInMongoSafely(this.getMongoNotificationReadFilter(actor), readAt);
   }
 
-  async getAuditRecords(table: AuditTable, orderColumn: string, page: number, pageSize: number) {
+  async getAuditRecords(table: NotificationAuditTable, orderColumn: string, page: number, pageSize: number) {
+    if (env.NOTIFICATION_AUDIT_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        return await listNotificationAuditRecordsFromMongo(table, page, pageSize);
+      } catch (error) {
+        console.warn("[notification-audit.mongo] Read failed; falling back to Supabase", {
+          table,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const from = page * pageSize;
     const to = from + pageSize - 1;
     const { data, error } = await adminSupabase
