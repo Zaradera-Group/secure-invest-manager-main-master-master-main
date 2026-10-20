@@ -1,4 +1,5 @@
 import { adminSupabase } from "../lib/supabase.js";
+import { env } from "../config/env.js";
 import { z } from "zod";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
 
@@ -25,6 +26,21 @@ const notificationPreferencesSchema = z.object({
   monthly_reports: z.boolean().optional(),
   birthday_notifications: z.boolean().optional(),
   reminder_days_before: z.array(z.number().int().min(0).max(365)).min(1).max(30).optional(),
+});
+
+const notificationAdminActionSchema = z.object({
+  action: z.enum([
+    "retry_failed_jobs",
+    "process_queue_now",
+    "queue_reminders_now",
+    "retry_single_job",
+    "retry_selected_jobs",
+    "cancel_single_job",
+    "cancel_selected_jobs",
+  ]),
+  batchSize: z.number().int().min(1).max(100).optional(),
+  jobId: z.string().uuid().optional(),
+  jobIds: z.array(z.string().uuid()).min(1).max(100).optional(),
 });
 
 const getWorkflowNotificationRole = (role: AppRole): WorkflowNotificationRole => {
@@ -56,6 +72,103 @@ const isVisibleToActor = (notification: DashboardNotificationRecord, actor: Auth
 };
 
 export class NotificationsService {
+  async executeAdminAction(payload: unknown) {
+    const input = notificationAdminActionSchema.parse(payload);
+    const now = new Date().toISOString();
+
+    if (input.action === "retry_failed_jobs") {
+      const result = await adminSupabase
+        .from("notification_jobs")
+        .update(this.buildRetryUpdate(now))
+        .eq("status", "failed")
+        .select("id");
+      return this.formatJobUpdate(
+        result.data,
+        result.error,
+        "Requeued failed jobs",
+        "Failed to requeue notification jobs",
+      );
+    }
+
+    if (input.action === "retry_single_job") {
+      if (!input.jobId) throw new Error("jobId is required");
+      const result = await adminSupabase
+        .from("notification_jobs")
+        .update(this.buildRetryUpdate(now))
+        .eq("id", input.jobId)
+        .select("id");
+      return this.formatJobUpdate(
+        result.data,
+        result.error,
+        `Requeued job ${input.jobId}`,
+        "Failed to requeue notification job",
+      );
+    }
+
+    if (input.action === "retry_selected_jobs") {
+      if (!input.jobIds?.length) throw new Error("jobIds is required");
+      const result = await adminSupabase
+        .from("notification_jobs")
+        .update(this.buildRetryUpdate(now))
+        .in("id", input.jobIds)
+        .select("id");
+      return this.formatJobUpdate(
+        result.data,
+        result.error,
+        "Requeued selected jobs",
+        "Failed to requeue notification jobs",
+      );
+    }
+
+    if (input.action === "cancel_single_job") {
+      if (!input.jobId) throw new Error("jobId is required");
+      const result = await adminSupabase
+        .from("notification_jobs")
+        .update(this.buildCancelUpdate(now))
+        .eq("id", input.jobId)
+        .in("status", ["pending", "failed", "processing"])
+        .select("id");
+      return this.formatJobUpdate(
+        result.data,
+        result.error,
+        `Cancelled job ${input.jobId}`,
+        "Failed to cancel notification job",
+      );
+    }
+
+    if (input.action === "cancel_selected_jobs") {
+      if (!input.jobIds?.length) throw new Error("jobIds is required");
+      const result = await adminSupabase
+        .from("notification_jobs")
+        .update(this.buildCancelUpdate(now))
+        .in("id", input.jobIds)
+        .in("status", ["pending", "failed", "processing"])
+        .select("id");
+      return this.formatJobUpdate(
+        result.data,
+        result.error,
+        "Cancelled selected jobs",
+        "Failed to cancel notification jobs",
+      );
+    }
+
+    if (input.action === "queue_reminders_now") {
+      const [payment, maturity, birthday, monthly] = await Promise.all([
+        this.invokeNotificationRpc("enqueue_payment_reminder_jobs"),
+        this.invokeNotificationRpc("enqueue_maturity_reminder_jobs"),
+        this.invokeNotificationRpc("enqueue_birthday_notification_jobs"),
+        this.invokeNotificationRpc("enqueue_monthly_report_jobs"),
+      ]);
+
+      return {
+        message: "Queued notification jobs successfully",
+        queueSummary: { payment, maturity, birthday, monthly },
+      };
+    }
+
+    return this.triggerExistingNotificationWorker(input.batchSize ?? 50);
+  }
+
   async getNotificationPreferences(actor: AuthenticatedUser) {
     const { data, error } = await adminSupabase
       .from("notification_preferences")
@@ -183,5 +296,63 @@ export class NotificationsService {
     }
 
     return `recipient_user_id.eq.${actor.id},user_role.eq.${notificationRole}`;
+  }
+
+  private buildRetryUpdate(scheduledFor: string) {
+    return {
+      status: "pending",
+      scheduled_for: scheduledFor,
+      locked_at: null,
+      processed_at: null,
+      last_error: null,
+    };
+  }
+
+  private buildCancelUpdate(processedAt: string) {
+    return {
+      status: "cancelled",
+      locked_at: null,
+      processed_at: processedAt,
+      last_error: null,
+    };
+  }
+
+  private formatJobUpdate(
+    data: Array<{ id: string }> | null,
+    error: { message: string } | null,
+    message: string,
+    failureMessage: string,
+  ) {
+    if (error) throw new Error(`${failureMessage}: ${error.message}`);
+    return { message: `${message}: ${data?.length ?? 0}`, affectedJobs: data?.length ?? 0 };
+  }
+
+  private async invokeNotificationRpc(functionName: string) {
+    const { data, error } = await adminSupabase.rpc(functionName);
+    if (error) throw new Error(`Failed to queue notifications: ${error.message}`);
+    return data ?? 0;
+  }
+
+  private async triggerExistingNotificationWorker(batchSize: number) {
+    const response = await fetch(`${env.SUPABASE_URL}/functions/v1/process-notification-jobs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ batchSize }),
+      signal: AbortSignal.timeout(env.SUPABASE_REQUEST_TIMEOUT_MS),
+    });
+    const body = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Notification worker failed: ${body || response.statusText}`);
+    }
+
+    try {
+      return JSON.parse(body) as unknown;
+    } catch {
+      return { message: "Notification queue processing triggered" };
+    }
   }
 }

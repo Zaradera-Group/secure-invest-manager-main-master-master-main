@@ -116,7 +116,7 @@ export default function NotificationAudit() {
   const adminAction = useAdminNotificationAction();
   const { toast } = useToast();
   const { role } = useAuth();
-  const canManageNotifications = role === 'admin' || role === 'super_admin';
+  const canManageNotifications = role === 'admin';
 
   const filteredNotifications = (notifications ?? []).filter((notification) => {
     const searchableText = [

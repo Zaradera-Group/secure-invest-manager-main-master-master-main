@@ -36,6 +36,14 @@ export const updateNotificationPreferences = async (request: Request, response: 
   }
 };
 
+export const executeAdminNotificationAction = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.executeAdminAction(request.body));
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
 export const getDashboardNotifications = async (request: Request, response: Response) => {
   try {
     const limit = Math.max(1, getBoundedInteger(request.query.limit, 20, 100));

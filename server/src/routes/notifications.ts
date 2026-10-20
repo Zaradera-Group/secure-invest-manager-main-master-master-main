@@ -3,6 +3,7 @@ import {
   getArchivedEmailNotificationAudit,
   getArchivedJobRunAudit,
   getArchivedNotificationJobAudit,
+  executeAdminNotificationAction,
   getDashboardNotifications,
   getEmailNotificationAudit,
   getJobRunAudit,
@@ -27,6 +28,7 @@ notificationsRouter.patch("/dashboard/read-all", requireRole(...staffRoles), mar
 notificationsRouter.patch("/dashboard/:id/read", requireRole(...staffRoles), markDashboardNotificationRead);
 notificationsRouter.get("/preferences", requireRole(...staffRoles), getNotificationPreferences);
 notificationsRouter.patch("/preferences", requireRole(...staffRoles), updateNotificationPreferences);
+notificationsRouter.post("/admin-actions", requireRole("admin"), executeAdminNotificationAction);
 
 notificationsRouter.get("/audit/email", requireRole("admin", "super_admin"), getEmailNotificationAudit);
 notificationsRouter.get("/audit/jobs", requireRole("admin", "super_admin"), getNotificationJobAudit);

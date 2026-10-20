@@ -99,7 +99,7 @@ export interface JobRunSummary {
   };
 }
 
-async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH' = 'GET', body?: unknown): Promise<T> {
+async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH' | 'POST' = 'GET', body?: unknown): Promise<T> {
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
 
@@ -243,12 +243,7 @@ export function useAdminNotificationAction() {
       jobId?: string;
       jobIds?: string[];
     }) => {
-      const { data, error } = await supabase.functions.invoke('admin-notification-actions', {
-        body: payload,
-      });
-
-      if (error) throw error;
-      return data;
+      return callNotificationsBackend('/notifications/admin-actions', 'POST', payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-jobs'] });
