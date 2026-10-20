@@ -316,6 +316,52 @@ export class CertificatesService {
     return (await this.listCertificateInboxRows(actor, scope)).length;
   }
 
+  async listCertificatesForRead(actor: AuthenticatedUser) {
+    const { data, error } = await adminSupabase
+      .from("certificates")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch certificates: ${error.message}`);
+    }
+
+    const certificates = (data ?? []) as CertificateRecord[];
+    const visibleCertificates = certificates.filter((certificate) => this.canReadCertificate(certificate, actor));
+    const investors = await this.listInvestorsForRead(actor);
+    const investorsById = new Map(investors.map((investor) => [investor.id, investor]));
+    const investorsByEmailAndName = new Map(
+      investors.map((investor) => [`${String(investor.email).toLowerCase()}::${investor.name}`, investor]),
+    );
+
+    return visibleCertificates.map((certificate) => {
+      const investor = (certificate.investor_id ? investorsById.get(certificate.investor_id) : undefined)
+        ?? investorsByEmailAndName.get(`${certificate.investor_email.toLowerCase()}::${certificate.investor_name}`);
+
+      return {
+        ...certificate,
+        investor_category: investor?.investor_category ?? null,
+      };
+    });
+  }
+
+  async getCertificateApprovalEvents(certificateId: string, actor: AuthenticatedUser) {
+    const certificate = await this.getCertificate(certificateId);
+    await this.assertCertificateAccess(certificate, actor);
+
+    const { data, error } = await adminSupabase
+      .from("notifications")
+      .select("id, user_role, message, created_at")
+      .eq("certificate_id", certificateId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch certificate approval events: ${error.message}`);
+    }
+
+    return data ?? [];
+  }
+
   async getDashboardPortfolioSummary(actor: AuthenticatedUser, scope: DashboardScope) {
     const investors = await this.getDashboardInvestorsForRead(actor, scope);
     const now = new Date();
@@ -1207,6 +1253,26 @@ export class CertificatesService {
     return "Review certificate";
   }
 
+  private canReadCertificate(certificate: CertificateRecord, actor: AuthenticatedUser) {
+    switch (actor.role) {
+      case "admin":
+      case "super_admin":
+        return true;
+      case "general_manager":
+        return certificate.status === "pending_general_manager"
+          || certificate.general_manager_reviewed_by === actor.id
+          || certificate.created_by === actor.id;
+      case "investment_manager":
+      case "accountant":
+        return certificate.status === "pending_manager"
+          || certificate.status === "approved"
+          || certificate.created_by === actor.id
+          || certificate.manager_reviewed_by === actor.id;
+      default:
+        return false;
+    }
+  }
+
   private assertCertificateRenderable(certificate: CertificateRecord) {
     const missing: string[] = [];
 
@@ -1861,35 +1927,7 @@ export class CertificatesService {
   }
 
   private async assertCertificateAccess(certificate: CertificateRecord, actor: AuthenticatedUser) {
-    switch (actor.role) {
-      case "admin":
-      case "super_admin":
-        return;
-      case "general_manager":
-        if (
-          certificate.status === "pending_general_manager"
-          || certificate.general_manager_reviewed_by === actor.id
-          || certificate.created_by === actor.id
-        ) {
-          return;
-        }
-        break;
-      case "investment_manager":
-      case "accountant":
-        if (
-          certificate.status === "pending_manager"
-          || certificate.status === "approved"
-          || certificate.created_by === actor.id
-          || certificate.manager_reviewed_by === actor.id
-        ) {
-          return;
-        }
-        break;
-      default:
-        break;
-    }
-
-    throw new Error("Forbidden for current role");
+    if (!this.canReadCertificate(certificate, actor)) throw new Error("Forbidden for current role");
   }
 
   private async updateCertificate(

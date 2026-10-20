@@ -103,6 +103,22 @@ export const getPendingApprovalCount = async (request: Request, response: Respon
   }
 };
 
+export const listCertificates = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.listCertificatesForRead(request.authUser!));
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const getCertificateApprovalEvents = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.getCertificateApprovalEvents(getRouteParam(request.params.id), request.authUser!));
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
 export const managerApprove = async (request: Request, response: Response) => {
   try {
     const certificate = await service.managerApprove(

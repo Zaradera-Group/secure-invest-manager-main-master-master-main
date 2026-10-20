@@ -64,6 +64,10 @@ export type CertificateInboxItem = {
   href: string;
 };
 
+export type CertificateListRow = WorkflowCertificate & {
+  investor_category?: string | null;
+};
+
 type WorkflowInvestor = {
   id: string;
   name: string;
@@ -133,19 +137,41 @@ export function useCertificateApprovalEvents(certificateId?: string) {
         throw new Error('Certificate id is required to load workflow notifications.');
       }
 
-      const { data, error } = await supabase
-        .from('notifications' as never)
-        .select('*')
-        .eq('certificate_id', certificateId)
-        .order('created_at', { ascending: false });
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) throw new Error('Failed to load session. Please sign in again.');
 
-      if (error) throw error;
-      return (data ?? []) as Array<{
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates/${encodeURIComponent(certificateId)}/approval-events`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = parseJsonSafely(await response.text());
+      if (!response.ok) throw new Error(data?.error ?? data?.message ?? 'Failed to load certificate approval events.');
+      return (Array.isArray(data) ? data : []) as Array<{
         id: string;
         user_role: string;
         message: string;
         created_at: string;
       }>;
+    },
+    refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
+  });
+}
+
+export function useCertificatesList() {
+  const { role } = useAuth();
+
+  return useQuery({
+    queryKey: ['certificates-list', role],
+    enabled: !!role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role),
+    queryFn: async () => {
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) throw new Error('Failed to load session. Please sign in again.');
+
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = parseJsonSafely(await response.text());
+      if (!response.ok) throw new Error(data?.error ?? data?.message ?? 'Failed to load certificates.');
+      return (Array.isArray(data) ? data : []) as CertificateListRow[];
     },
     refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
   });
