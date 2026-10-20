@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
+const NOTIFICATIONS_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+
 export interface NotificationPreferences {
   user_id: string;
   email_enabled: boolean;
@@ -97,6 +99,35 @@ export interface JobRunSummary {
   };
 }
 
+async function getNotificationAuditRecords<T>(path: string): Promise<T> {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+
+  const token = data.session?.access_token;
+  if (!token) throw new Error('You must be signed in to view notification audit data.');
+
+  const response = await fetch(`${NOTIFICATIONS_API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const raw = await response.text();
+  let payload: { message?: string } | T | null = null;
+
+  if (raw) {
+    try {
+      payload = JSON.parse(raw) as { message?: string } | T;
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    const message = typeof payload === 'object' && payload && 'message' in payload ? payload.message : null;
+    throw new Error(message ?? 'Failed to load notification audit data.');
+  }
+
+  return payload as T;
+}
+
 export function useNotificationPreferences() {
   const { user, loading } = useAuth();
 
@@ -169,114 +200,42 @@ export function useUpdateNotificationPreferences() {
 export function useEmailNotifications(page = 0, pageSize = 20) {
   return useQuery({
     queryKey: ['email-notifications', page, pageSize],
-    queryFn: async () => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-
-      const { data, error } = await supabase
-        .from('email_notifications')
-        .select('*')
-        .order('sent_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => getNotificationAuditRecords<EmailNotification[]>(`/notifications/audit/email?page=${page}&pageSize=${pageSize}`),
   });
 }
 
 export function useArchivedEmailNotifications(page = 0, pageSize = 20) {
   return useQuery({
     queryKey: ['archived-email-notifications', page, pageSize],
-    queryFn: async () => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-
-      const { data, error } = await supabase
-        .from('email_notifications_archive')
-        .select('*')
-        .order('archived_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-      return data as ArchivedEmailNotification[];
-    },
+    queryFn: () => getNotificationAuditRecords<ArchivedEmailNotification[]>(`/notifications/audit/archive/email?page=${page}&pageSize=${pageSize}`),
   });
 }
 
 export function useNotificationJobs(page = 0, pageSize = 20) {
   return useQuery({
     queryKey: ['notification-jobs', page, pageSize],
-    queryFn: async () => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-
-      const { data, error } = await supabase
-        .from('notification_jobs')
-        .select('*')
-        .order('scheduled_for', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-      return data as NotificationJob[];
-    },
+    queryFn: () => getNotificationAuditRecords<NotificationJob[]>(`/notifications/audit/jobs?page=${page}&pageSize=${pageSize}`),
   });
 }
 
 export function useArchivedNotificationJobs(page = 0, pageSize = 20) {
   return useQuery({
     queryKey: ['archived-notification-jobs', page, pageSize],
-    queryFn: async () => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-
-      const { data, error } = await supabase
-        .from('notification_jobs_archive')
-        .select('*')
-        .order('archived_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-      return data as ArchivedNotificationJob[];
-    },
+    queryFn: () => getNotificationAuditRecords<ArchivedNotificationJob[]>(`/notifications/audit/archive/jobs?page=${page}&pageSize=${pageSize}`),
   });
 }
 
 export function useJobRuns(page = 0, pageSize = 20) {
   return useQuery({
     queryKey: ['job-runs', page, pageSize],
-    queryFn: async () => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-
-      const { data, error } = await supabase
-        .from('job_runs')
-        .select('*')
-        .order('started_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-      return data as JobRun[];
-    },
+    queryFn: () => getNotificationAuditRecords<JobRun[]>(`/notifications/audit/job-runs?page=${page}&pageSize=${pageSize}`),
   });
 }
 
 export function useArchivedJobRuns(page = 0, pageSize = 20) {
   return useQuery({
     queryKey: ['archived-job-runs', page, pageSize],
-    queryFn: async () => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-
-      const { data, error } = await supabase
-        .from('job_runs_archive')
-        .select('*')
-        .order('archived_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
-      return data as ArchivedJobRun[];
-    },
+    queryFn: () => getNotificationAuditRecords<ArchivedJobRun[]>(`/notifications/audit/archive/job-runs?page=${page}&pageSize=${pageSize}`),
   });
 }
 

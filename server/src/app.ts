@@ -13,6 +13,7 @@ import {
 import { sendPlainEmail } from "./lib/email.js";
 import { checkMongoHealth, isMongoConfigured } from "./lib/mongodb.js";
 import { publicIntakeRouter } from "./routes/public-intake.js";
+import { notificationsRouter } from "./routes/notifications.js";
 
 export const app = express();
 
@@ -123,6 +124,7 @@ app.use("/auth", authRouter);
 app.use("/public", publicIntakeRouter);
 app.use("/certificates", certificatesRouter);
 app.use("/investors", investorsRouter);
+app.use("/notifications", notificationsRouter);
 
 app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   response.status(500).json({
