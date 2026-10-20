@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Eye, FileCheck2, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAccessibleInvestors } from '@/hooks/useInvestors';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,16 +41,10 @@ export default function CertificatesList() {
       if (error) throw error;
 
       const rows = (data ?? []) as unknown as CertificateRow[];
-      const investorEmails = [...new Set(rows.map((certificate) => certificate.investor_email.toLowerCase()))];
-      const { data: investors, error: investorError } = await supabase
-        .from('investors')
-        .select('name,email,investor_category')
-        .in('email', investorEmails);
-
-      if (investorError) throw investorError;
+      const investors = await fetchAccessibleInvestors();
 
       const investorMap = new Map(
-        ((investors ?? []) as Array<{ name: string; email: string; investor_category: string | null }>).map((investor) => [
+        investors.map((investor) => [
           `${investor.email.toLowerCase()}::${investor.name}`,
           investor.investor_category,
         ]),

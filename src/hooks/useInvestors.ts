@@ -130,7 +130,7 @@ export async function deleteInvestorPermanently(investorId: string) {
   return callInvestorBackend<{ message: string }>(`/investors/${investorId}`, 'DELETE');
 }
 
-async function getVisibleInvestorsFromBackend() {
+export async function fetchAccessibleInvestors() {
   return callInvestorBackend<InvestorWithCreator[]>('/investors', 'GET');
 }
 
@@ -146,7 +146,7 @@ export function useInvestors(page = 0, pageSize = 50) {
     queryFn: async () => {
       const from = page * pageSize;
       const to = from + pageSize - 1;
-      const visibleInvestors = await getVisibleInvestorsFromBackend();
+      const visibleInvestors = await fetchAccessibleInvestors();
       return visibleInvestors.slice(from, to + 1);
     },
     staleTime: 5 * 60 * 1000,
@@ -170,7 +170,7 @@ export function useInvestorList(options: {
     queryFn: async () => {
       const from = page * pageSize;
       const to = from + pageSize - 1;
-      let visibleInvestors = await getVisibleInvestorsFromBackend();
+      let visibleInvestors = await fetchAccessibleInvestors();
 
       if (statusFilter !== 'all') {
         visibleInvestors = visibleInvestors.filter((investor) => investor.liquidation_status === statusFilter);
@@ -210,7 +210,7 @@ export async function exportInvestors(options: {
   categoryFilter?: string;
 }) {
   const { search = '', statusFilter = 'all', typeFilter = 'all', categoryFilter = 'all' } = options;
-  let visibleInvestors = await getVisibleInvestorsFromBackend();
+  let visibleInvestors = await fetchAccessibleInvestors();
 
   if (statusFilter !== 'all') {
     visibleInvestors = visibleInvestors.filter((investor) => investor.liquidation_status === statusFilter);

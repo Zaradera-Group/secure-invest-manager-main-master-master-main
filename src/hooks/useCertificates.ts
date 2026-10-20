@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Database } from '@/integrations/supabase/types';
+import { fetchAccessibleInvestors } from '@/hooks/useInvestors';
 
 type AppRole = Database['public']['Enums']['app_role'];
 type DashboardScope = 'staff' | 'executive' | 'all';
@@ -377,30 +378,10 @@ export function useCertificateInbox(scope: DashboardScope = 'staff') {
           certificate.status === 'pending_general_manager' || certificate.created_by === user.id,
         );
       }
-      const investorIds = [...new Set(certificateRows.map((certificate) => certificate.investor_id).filter((value): value is string => Boolean(value)))];
-      const investorEmails = [...new Set(certificateRows.map((certificate) => certificate.investor_email.toLowerCase()))];
-      const [investorsByIdResult, investorsByEmailResult] = await Promise.all([
-        investorIds.length
-          ? supabase
-              .from('investors')
-              .select('id, name, email, investor_category')
-              .in('id', investorIds)
-          : Promise.resolve({ data: [], error: null } as const),
-        investorEmails.length
-          ? supabase
-              .from('investors')
-              .select('id, name, email, investor_category')
-              .in('email', investorEmails)
-          : Promise.resolve({ data: [], error: null } as const),
-      ]);
-
-      if (investorsByIdResult.error) throw investorsByIdResult.error;
-      if (investorsByEmailResult.error) throw investorsByEmailResult.error;
-
-      const investors = [...(investorsByIdResult.data ?? []), ...(investorsByEmailResult.data ?? [])];
+      const investors = await fetchAccessibleInvestors();
 
       const investorMap = new Map<string, { id: string; name: string; email: string; investor_category: string | null }>();
-      ((investors ?? []) as Array<{ id: string; name: string; email: string; investor_category: string | null }>).forEach((investor) => {
+      investors.forEach((investor) => {
         investorMap.set(investor.id, investor);
         investorMap.set(`${investor.email.toLowerCase()}::${investor.name}`, investor);
       });
