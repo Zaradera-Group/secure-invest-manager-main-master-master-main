@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
+const API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+
 export type AnnouncementRow = {
   id: string;
   title: string;
@@ -17,29 +19,44 @@ function normalizeAnnouncementStatus(status: unknown): AnnouncementRow['status']
   return 'info';
 }
 
+async function getAuthorizationHeaders() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  if (!data.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
+
+  return { Authorization: `Bearer ${data.session.access_token}` };
+}
+
+async function requestAnnouncements<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, options);
+  const payload = await response.json().catch(() => null) as { message?: string } | T | null;
+
+  if (!response.ok) {
+    throw new Error(payload && typeof payload === 'object' && 'message' in payload && typeof payload.message === 'string'
+      ? payload.message
+      : 'Announcement request failed');
+  }
+
+  return payload as T;
+}
+
 export function useAnnouncements(page = 0, pageSize = 8) {
   return useQuery<{ data: AnnouncementRow[]; count: number }>({
     queryKey: ['announcements', page, pageSize],
     queryFn: async (): Promise<{ data: AnnouncementRow[]; count: number }> => {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
+      const result = await requestAnnouncements<{ data: AnnouncementRow[]; count: number }>(
+        `/announcements?page=${page}&pageSize=${pageSize}`,
+      );
 
-      const { data, error, count } = await supabase
-        .from('announcements')
-        .select('*', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      if (error) throw error;
       return {
-        data: (data ?? []).map((announcement) => ({
+        data: (result.data ?? []).map((announcement) => ({
           id: announcement.id,
           title: announcement.title,
           detail: announcement.detail,
           status: normalizeAnnouncementStatus(announcement.status),
           created_at: announcement.created_at,
         })),
-        count: count ?? 0,
+        count: result.count ?? 0,
       };
     },
     staleTime: 1000 * 60,
@@ -51,14 +68,14 @@ export function useCreateAnnouncement() {
 
   return useMutation({
     mutationFn: async (announcement: Omit<AnnouncementRow, 'id' | 'created_at'>) => {
-      const { data, error } = await supabase
-        .from('announcements')
-        .insert(announcement)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      return requestAnnouncements<AnnouncementRow>('/admin/announcements', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(await getAuthorizationHeaders()),
+        },
+        body: JSON.stringify(announcement),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['announcements'] });
@@ -71,12 +88,10 @@ export function useDeleteAnnouncement() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('announcements')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
+      await requestAnnouncements<void>(`/admin/announcements/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: await getAuthorizationHeaders(),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['announcements'] });

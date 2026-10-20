@@ -36,6 +36,7 @@ export default function Settings() {
   const updatePreferences = useUpdateNotificationPreferences();
   const { role, user } = useAuth();
   const updateAvailability = useUpdateAvailability();
+  const canManageAnnouncements = role === 'admin' || role === 'super_admin';
 
   const { data: isAvailable } = useQuery({
     queryKey: ['user-availability', user?.id, role],
@@ -82,14 +83,17 @@ export default function Settings() {
                 {new Date(announcement.created_at).toLocaleDateString()}
               </p>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => handleDeleteAnnouncement(announcement.id)}
-              disabled={deleteAnnouncement.isPending}
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
+            {canManageAnnouncements && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleDeleteAnnouncement(announcement.id)}
+                disabled={deleteAnnouncement.isPending}
+                aria-label={`Delete announcement: ${announcement.title}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
         ))}
         <div className="flex items-center justify-between pt-2">
@@ -232,56 +236,58 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-heading flex items-center gap-2">
-              <Bell className="w-4 h-4 text-primary" />
-              Create Announcement
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Input
-                placeholder="Announcement title"
-                value={newAnnouncement.title}
-                onChange={(e) => setNewAnnouncement(prev => ({ ...prev, title: e.target.value }))}
-              />
-            </div>
-            <div>
-              <Textarea
-                placeholder="Announcement details"
-                value={newAnnouncement.detail}
-                onChange={(e) => setNewAnnouncement(prev => ({ ...prev, detail: e.target.value }))}
-                rows={3}
-              />
-            </div>
-            <div>
-              <Select
-                value={newAnnouncement.status}
-                onValueChange={(value: 'info' | 'urgent' | 'matured') =>
-                  setNewAnnouncement(prev => ({ ...prev, status: value }))
-                }
+        {canManageAnnouncements && (
+          <Card className="glass-card">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-heading flex items-center gap-2">
+                <Bell className="w-4 h-4 text-primary" />
+                Create Announcement
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Input
+                  placeholder="Announcement title"
+                  value={newAnnouncement.title}
+                  onChange={(e) => setNewAnnouncement(prev => ({ ...prev, title: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Textarea
+                  placeholder="Announcement details"
+                  value={newAnnouncement.detail}
+                  onChange={(e) => setNewAnnouncement(prev => ({ ...prev, detail: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+              <div>
+                <Select
+                  value={newAnnouncement.status}
+                  onValueChange={(value: 'info' | 'urgent' | 'matured') =>
+                    setNewAnnouncement(prev => ({ ...prev, status: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="info">Info</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                    <SelectItem value="matured">Matured</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                onClick={handleCreateAnnouncement}
+                disabled={createAnnouncement.isPending}
+                className="w-full"
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="info">Info</SelectItem>
-                  <SelectItem value="urgent">Urgent</SelectItem>
-                  <SelectItem value="matured">Matured</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              onClick={handleCreateAnnouncement}
-              disabled={createAnnouncement.isPending}
-              className="w-full"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              {createAnnouncement.isPending ? 'Creating...' : 'Create Announcement'}
-            </Button>
-          </CardContent>
-        </Card>
+                <Plus className="w-4 h-4 mr-2" />
+                {createAnnouncement.isPending ? 'Creating...' : 'Create Announcement'}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card className="glass-card">

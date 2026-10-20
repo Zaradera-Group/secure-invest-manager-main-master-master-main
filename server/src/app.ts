@@ -15,6 +15,7 @@ import { checkMongoHealth, isMongoConfigured } from "./lib/mongodb.js";
 import { publicIntakeRouter } from "./routes/public-intake.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { adminRouter } from "./routes/admin.js";
+import { announcementsRouter } from "./routes/announcements.js";
 
 export const app = express();
 
@@ -123,6 +124,7 @@ app.get("/health/email", async (request, response, next) => {
 
 app.use("/auth", authRouter);
 app.use("/public", publicIntakeRouter);
+app.use("/announcements", announcementsRouter);
 app.use("/certificates", certificatesRouter);
 app.use("/investors", investorsRouter);
 app.use("/notifications", notificationsRouter);
