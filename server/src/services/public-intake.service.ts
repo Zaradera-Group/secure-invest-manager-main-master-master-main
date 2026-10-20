@@ -6,8 +6,11 @@ import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
 import {
   deletePublicIntakeRequestFromMongoSafely,
+  getPublicIntakeRequestFromMongo,
+  listPublicIntakeRequestsFromMongo,
   mirrorPublicIntakeRequestToMongoSafely,
 } from "../repositories/public-intake.mongo.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
 import type { AuthenticatedUser } from "../types/certificates.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import {
@@ -66,6 +69,16 @@ const intakeReviewSchema = z.object({
 });
 
 export async function listPublicIntakeRequests() {
+  if (env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      return await listPublicIntakeRequestsFromMongo();
+    } catch (error) {
+      console.warn("[public-intake.mongo] MongoDB inbox read failed; falling back to Supabase", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const { data, error } = await adminSupabase
     .from("public_intake_requests")
     .select("*")
@@ -76,6 +89,18 @@ export async function listPublicIntakeRequests() {
 }
 
 export async function getPublicIntakeRequestForStaff(requestId: string) {
+  if (env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      const record = await getPublicIntakeRequestFromMongo(requestId);
+      if (record) return record;
+    } catch (error) {
+      console.warn("[public-intake.mongo] MongoDB inbox detail read failed; falling back to Supabase", {
+        requestId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const { data, error } = await adminSupabase
     .from("public_intake_requests")
     .select("*")

@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "backfill:public-intake:mongo": "tsx scripts/backfill-public-intake-mongo.ts",
+    "audit:public-intake:mongo": "tsx scripts/audit-public-intake-mongo.ts",
     "backfill:notifications:mongo": "tsx scripts/backfill-notifications-mongo.ts",
     "backfill:workflow-data:mongo": "tsx scripts/backfill-workflow-data-mongo.ts"
   },

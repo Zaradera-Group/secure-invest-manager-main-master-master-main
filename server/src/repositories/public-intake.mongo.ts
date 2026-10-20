@@ -8,6 +8,11 @@ type PublicIntakeMirrorInput = {
   submittedAt: string;
 };
 
+type MirroredPublicIntakeDocument = {
+  supabaseRequestId: string;
+  rawSupabaseRecord?: Record<string, unknown>;
+};
+
 let indexesReady: Promise<void> | null = null;
 
 async function ensurePublicIntakeIndexes() {
@@ -82,4 +87,36 @@ export function deletePublicIntakeRequestFromMongoSafely(requestId: string) {
         reason: error instanceof Error ? error.message : String(error),
       });
     });
+}
+
+export async function listPublicIntakeRequestsFromMongo() {
+  if (!isMongoConfigured()) {
+    throw new Error("MongoDB is not configured");
+  }
+
+  indexesReady ??= ensurePublicIntakeIndexes();
+  await indexesReady;
+
+  const db = await getMongoDb();
+  const records = await db.collection<MirroredPublicIntakeDocument>("public_intake_requests")
+    .find({}, { projection: { rawSupabaseRecord: 1, supabaseRequestId: 1 } })
+    .sort({ submittedAt: -1 })
+    .toArray();
+
+  return records.flatMap((record) => record.rawSupabaseRecord ? [record.rawSupabaseRecord] : []);
+}
+
+export async function getPublicIntakeRequestFromMongo(requestId: string) {
+  if (!isMongoConfigured()) {
+    throw new Error("MongoDB is not configured");
+  }
+
+  indexesReady ??= ensurePublicIntakeIndexes();
+  await indexesReady;
+
+  const db = await getMongoDb();
+  const record = await db.collection<MirroredPublicIntakeDocument>("public_intake_requests")
+    .findOne({ supabaseRequestId: requestId }, { projection: { rawSupabaseRecord: 1 } });
+
+  return record?.rawSupabaseRecord ?? null;
 }
