@@ -8,6 +8,8 @@ const supportedRoles = new Set<AppRole>([
   "general_manager",
   "super_admin",
   "admin",
+  "software_engineer",
+  "staff",
 ]);
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;

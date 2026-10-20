@@ -207,25 +207,6 @@ export function useArchivedJobRuns(page = 0, pageSize = 20) {
   });
 }
 
-export function useSendTestEmail() {
-  return useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('send-email', {
-        body: {
-          to: 'test@example.com', // This would be the user's email in real implementation
-          subject: 'Test Email from Zaradera',
-          html: '<h1>Test Email</h1><p>This is a test email from your investment management system.</p>',
-          userId: 'test-user-id',
-          notificationType: 'test_email',
-        },
-      });
-
-      if (error) throw error;
-      return data;
-    },
-  });
-}
-
 export function useAdminNotificationAction() {
   const queryClient = useQueryClient();
 

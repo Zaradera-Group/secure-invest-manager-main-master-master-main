@@ -1,8 +1,12 @@
 import { Router } from "express";
+import { getApprovedEmailAccess, getApprovedUserAccess } from "../controllers/auth.controller.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { requireDualAuth } from "../middleware/auth.js";
 
 export const authRouter = Router();
+
+authRouter.post("/access/approved-email", getApprovedEmailAccess);
+authRouter.post("/access/approved-user", getApprovedUserAccess);
 
 authRouter.get("/me", requireDualAuth, (request, response) => {
   response.json({
