@@ -313,16 +313,7 @@ export class CertificatesService {
   }
 
   async listCertificatesForRead(actor: AuthenticatedUser) {
-    const { data, error } = await adminSupabase
-      .from("certificates")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      throw new Error(`Failed to fetch certificates: ${error.message}`);
-    }
-
-    const certificates = (data ?? []) as CertificateRecord[];
+    const certificates = await this.readCertificatesForRead();
     const visibleCertificates = certificates.filter((certificate) => this.canReadCertificate(certificate, actor));
     const investors = await this.listInvestorsForRead(actor);
     const investorsById = new Map(investors.map((investor) => [investor.id, investor]));
@@ -593,6 +584,75 @@ export class CertificatesService {
     investorId?: string | null,
   ) {
     const normalizedEmail = investorEmail.trim().toLowerCase();
+    const data = await this.readLatestCertificateForInvestor(investorId, normalizedEmail, investorName);
+
+    if (!data && investorId) {
+      const fallbackData = await this.readLatestCertificateForInvestor(null, normalizedEmail, investorName);
+
+      if (!fallbackData) {
+        return null;
+      }
+
+      await this.assertCertificateAccess(fallbackData, actor);
+      return fallbackData;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    await this.assertCertificateAccess(data, actor);
+    return data;
+  }
+
+  private async readCertificatesForRead(): Promise<CertificateRecord[]> {
+    if (env.CERTIFICATES_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        return await listWorkflowRecordsFromMongo("certificates") as unknown as CertificateRecord[];
+      } catch (error) {
+        console.warn("[workflow-data.mongo] MongoDB certificate list read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const { data, error } = await adminSupabase
+      .from("certificates")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch certificates: ${error.message}`);
+    }
+
+    return (data ?? []) as CertificateRecord[];
+  }
+
+  private async readLatestCertificateForInvestor(
+    investorId: string | null | undefined,
+    normalizedEmail: string,
+    investorName: string,
+  ): Promise<CertificateRecord | null> {
+    if (env.CERTIFICATES_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        const certificates = await listWorkflowRecordsFromMongo("certificates") as unknown as CertificateRecord[];
+        const matches = certificates.filter((certificate) => {
+          if (investorId) return certificate.investor_id === investorId;
+          return certificate.investor_email?.trim().toLowerCase() === normalizedEmail
+            && certificate.investor_name === investorName;
+        });
+
+        return matches.sort((left, right) => (
+          Date.parse(right.created_at ?? "") - Date.parse(left.created_at ?? "")
+        ))[0] ?? null;
+      } catch (error) {
+        console.warn("[workflow-data.mongo] MongoDB latest certificate read failed; falling back to Supabase", {
+          investorId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     let query = adminSupabase
       .from("certificates")
       .select("*")
@@ -612,34 +672,6 @@ export class CertificatesService {
     if (error) {
       throw new Error(`Failed to load certificate: ${error.message}`);
     }
-
-    if (!data && investorId) {
-      const fallbackQuery = adminSupabase
-        .from("certificates")
-        .select("*")
-        .eq("investor_email", normalizedEmail)
-        .eq("investor_name", investorName)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      const { data: fallbackData, error: fallbackError } = await fallbackQuery.maybeSingle<CertificateRecord>();
-      if (fallbackError) {
-        throw new Error(`Failed to load certificate: ${fallbackError.message}`);
-      }
-
-      if (!fallbackData) {
-        return null;
-      }
-
-      await this.assertCertificateAccess(fallbackData, actor);
-      return fallbackData;
-    }
-
-    if (!data) {
-      return null;
-    }
-
-    await this.assertCertificateAccess(data, actor);
     return data;
   }
 
