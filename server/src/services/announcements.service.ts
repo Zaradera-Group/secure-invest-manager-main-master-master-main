@@ -1,6 +1,21 @@
+import { env } from "../config/env.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
 import { adminSupabase } from "../lib/supabase.js";
+import {
+  deleteWorkflowRecordsFromMongoSafely,
+  listWorkflowRecordsFromMongo,
+  mirrorWorkflowRecordsToMongoSafely,
+} from "../repositories/workflow-data.mongo.js";
 
 export type AnnouncementStatus = "info" | "urgent" | "matured";
+
+type AnnouncementRecord = {
+  id: string;
+  title: string;
+  detail: string;
+  status: AnnouncementStatus;
+  created_at: string;
+};
 
 export class AnnouncementValidationError extends Error {}
 
@@ -33,6 +48,21 @@ const parseAnnouncement = (input: unknown) => {
 
 export class AnnouncementsService {
   async list(page: number, pageSize: number) {
+    if (env.ANNOUNCEMENTS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        const announcements = await listWorkflowRecordsFromMongo("announcements") as unknown as AnnouncementRecord[];
+        const from = page * pageSize;
+        return {
+          data: announcements.slice(from, from + pageSize),
+          count: announcements.length,
+        };
+      } catch (error) {
+        console.warn("[workflow-data.mongo] MongoDB announcement read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const from = page * pageSize;
     const to = from + pageSize - 1;
     const { data, error, count } = await adminSupabase
@@ -45,7 +75,7 @@ export class AnnouncementsService {
       throw new Error(`Failed to fetch announcements: ${error.message}`);
     }
 
-    return { data: data ?? [], count: count ?? 0 };
+    return { data: (data ?? []) as AnnouncementRecord[], count: count ?? 0 };
   }
 
   async create(input: unknown) {
@@ -60,7 +90,13 @@ export class AnnouncementsService {
       throw new Error(`Failed to create announcement: ${error.message}`);
     }
 
-    return data;
+    const record = data as AnnouncementRecord;
+    mirrorWorkflowRecordsToMongoSafely({
+      table: "announcements",
+      records: [record],
+    });
+
+    return record;
   }
 
   async remove(id: string) {
@@ -72,5 +108,10 @@ export class AnnouncementsService {
     if (error) {
       throw new Error(`Failed to delete announcement: ${error.message}`);
     }
+
+    deleteWorkflowRecordsFromMongoSafely({
+      table: "announcements",
+      supabaseIds: [id],
+    });
   }
 }

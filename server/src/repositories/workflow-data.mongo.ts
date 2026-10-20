@@ -3,6 +3,7 @@ import type { Collection, Document } from "mongodb";
 import { env } from "../config/env.js";
 
 export const workflowMirrorTables = [
+  "announcements",
   "investors",
   "certificates",
   "certificate_approval_events",
@@ -40,6 +41,8 @@ async function ensureIndexes(table: WorkflowMirrorTable) {
 
 function getTableIndexes(table: WorkflowMirrorTable, collection: Collection<Document>) {
   switch (table) {
+    case "announcements":
+      return [collection.createIndex({ status: 1, createdAt: -1 })];
     case "investors":
       return [collection.createIndex({ email: 1 }), collection.createIndex({ createdBy: 1, createdAt: -1 })];
     case "certificates":
@@ -196,7 +199,9 @@ function buildWorkflowDocument(table: WorkflowMirrorTable, record: Record<string
     createdBy: table === "investors" ? record.created_by ?? null : undefined,
     investorId: table === "certificates" || table === "investor_certificates" ? record.investor_id ?? null : undefined,
     certificateId: table === "certificate_approval_events" ? record.certificate_id ?? null : undefined,
-    status: table === "certificates" || table === "investor_certificates" ? record.status ?? null : undefined,
+    status: table === "announcements" || table === "certificates" || table === "investor_certificates"
+      ? record.status ?? null
+      : undefined,
     storagePath: table === "certificate_templates" ? record.storage_path ?? null : undefined,
     rawSupabaseRecord: record,
   };
