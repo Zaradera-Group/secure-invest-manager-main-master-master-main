@@ -1,4 +1,8 @@
 import { adminSupabase } from "./supabase.js";
+import {
+  mirrorSecurityAuditRecordToMongoSafely,
+  type SecurityAuditRecord,
+} from "../repositories/security-audit.mongo.js";
 
 type AuditAction =
   | "certificate_created"
@@ -19,17 +23,23 @@ export const insertAuditLog = async (input: {
   targetEmail?: string | null;
   metadata?: Record<string, unknown>;
 }) => {
-  const { error } = await adminSupabase.from("security_audit_logs").insert({
-    action: input.action,
-    actor_user_id: input.actorUserId ?? null,
-    actor_email: input.actorEmail ?? null,
-    actor_role: input.actorRole ?? null,
-    certificate_id: input.certificateId ?? null,
-    target_email: input.targetEmail ?? null,
-    metadata: input.metadata ?? {},
-  });
+  const { data, error } = await adminSupabase
+    .from("security_audit_logs")
+    .insert({
+      action: input.action,
+      actor_user_id: input.actorUserId ?? null,
+      actor_email: input.actorEmail ?? null,
+      actor_role: input.actorRole ?? null,
+      certificate_id: input.certificateId ?? null,
+      target_email: input.targetEmail ?? null,
+      metadata: input.metadata ?? {},
+    })
+    .select("*")
+    .single();
 
-  if (error) {
-    throw new Error(`Failed to insert audit log: ${error.message}`);
+  if (error || !data) {
+    throw new Error(`Failed to insert audit log: ${error?.message ?? "no record was returned"}`);
   }
+
+  mirrorSecurityAuditRecordToMongoSafely(data as SecurityAuditRecord);
 };

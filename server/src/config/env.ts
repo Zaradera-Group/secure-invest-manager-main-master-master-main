@@ -89,6 +89,10 @@ const envSchema = z.object({
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   NOTIFICATIONS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   NOTIFICATION_PREFERENCES_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
+  SECURITY_AUDIT_MONGO_MIRROR_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => (value === undefined ? true : value === true || value === "true")),
   WORKFLOW_DATA_MONGO_MIRROR_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()
