@@ -13,7 +13,9 @@
     "backfill:notifications:mongo": "tsx scripts/backfill-notifications-mongo.ts",
     "audit:notifications:mongo": "tsx scripts/audit-notifications-mongo.ts",
     "backfill:workflow-data:mongo": "tsx scripts/backfill-workflow-data-mongo.ts",
-    "audit:workflow-data:mongo": "tsx scripts/audit-workflow-data-mongo.ts"
+    "audit:workflow-data:mongo": "tsx scripts/audit-workflow-data-mongo.ts",
+    "backfill:staff-directory:mongo": "tsx scripts/backfill-staff-directory-mongo.ts",
+    "audit:staff-directory:mongo": "tsx scripts/audit-staff-directory-mongo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",

@@ -1,4 +1,7 @@
+import { env } from "../config/env.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
 import { adminSupabase } from "../lib/supabase.js";
+import { listStaffDirectoryFromMongo } from "../repositories/staff-directory.mongo.js";
 
 const formatRoleLabel = (role: string | null | undefined) => {
   switch (role) {
@@ -14,6 +17,24 @@ const formatRoleLabel = (role: string | null | undefined) => {
 
 export class AdminService {
   async getCreatorDirectory() {
+    if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        const staffDirectory = await listStaffDirectoryFromMongo();
+        return staffDirectory.flatMap((staffMember) => staffMember.roles.map((role) => {
+          const roleLabel = formatRoleLabel(role);
+          return {
+            userId: staffMember.userId,
+            displayName: staffMember.fullName?.trim() || roleLabel,
+            roleLabel,
+          };
+        }));
+      } catch (error) {
+        console.warn("[staff-directory.mongo] Staff directory read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const [profilesResult, rolesResult] = await Promise.all([
       adminSupabase.from("profiles").select("id, full_name"),
       adminSupabase.from("user_roles").select("user_id, role"),
@@ -35,6 +56,22 @@ export class AdminService {
   }
 
   async getRoleCounts() {
+    if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+      try {
+        const staffDirectory = await listStaffDirectoryFromMongo();
+        return staffDirectory.reduce<Record<string, number>>((counts, staffMember) => {
+          for (const role of staffMember.roles) {
+            counts[role] = (counts[role] ?? 0) + 1;
+          }
+          return counts;
+        }, {});
+      } catch (error) {
+        console.warn("[staff-directory.mongo] Staff role count read failed; falling back to Supabase", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     const { data, error } = await adminSupabase.from("user_roles").select("role");
     if (error) throw new Error(`Failed to fetch staff role counts: ${error.message}`);
 
