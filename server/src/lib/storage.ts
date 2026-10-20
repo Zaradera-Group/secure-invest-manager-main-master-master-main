@@ -12,6 +12,8 @@ type UploadObjectArgs = {
   path: string;
   bytes: Uint8Array | Buffer;
   contentType: string;
+  supabaseBucket?: string;
+  upsert?: boolean;
 };
 
 const s3Client = env.STORAGE_PROVIDER === "s3"
@@ -52,7 +54,7 @@ export function resolveStoragePath(path: string) {
     : `${env.S3_PREFIX}/${normalizedPath}`;
 }
 
-export async function uploadObject({ path, bytes, contentType }: UploadObjectArgs) {
+export async function uploadObject({ path, bytes, contentType, supabaseBucket, upsert = true }: UploadObjectArgs) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
@@ -69,10 +71,10 @@ export async function uploadObject({ path, bytes, contentType }: UploadObjectArg
   }
 
   const { error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
+    .from(supabaseBucket ?? env.CERTIFICATE_STORAGE_BUCKET)
     .upload(storagePath, bytes, {
       contentType,
-      upsert: true,
+      upsert,
     });
 
   if (error) {

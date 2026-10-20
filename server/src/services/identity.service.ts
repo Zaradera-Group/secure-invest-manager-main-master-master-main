@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { env } from "../config/env.js";
-import { adminSupabase } from "../lib/supabase.js";
+import { uploadObject } from "../lib/storage.js";
 import type { AuthenticatedUser } from "../types/certificates.js";
 
 const passportSchema = z.object({
@@ -22,14 +22,14 @@ export class IdentityService {
 
     const extension = file.contentType.split("/")[1];
     const storagePath = `passports/${actor.id}/${randomUUID()}.${extension}`;
-    const { error } = await adminSupabase.storage
-      .from(env.INVESTOR_PASSPORT_STORAGE_BUCKET)
-      .upload(storagePath, bytes, { contentType: file.contentType, upsert: false });
+    const uploadedPath = await uploadObject({
+      path: storagePath,
+      bytes,
+      contentType: file.contentType,
+      supabaseBucket: env.INVESTOR_PASSPORT_STORAGE_BUCKET,
+      upsert: false,
+    });
 
-    if (error) {
-      throw new Error(`Failed to upload passport image: ${error.message}`);
-    }
-
-    return { passportPhotoUrl: storagePath };
+    return { passportPhotoUrl: uploadedPath };
   }
 }
