@@ -1,13 +1,15 @@
 import cron from "node-cron";
 import { env } from "../config/env.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
 import { adminSupabase } from "../lib/supabase.js";
 import { sendBirthdaySmsBatch } from "../lib/sms.js";
 import { sendBirthdayEmail } from "../lib/email.js";
+import { listWorkflowRecordsFromMongo } from "../repositories/workflow-data.mongo.js";
 
 type BirthdayInvestor = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string;
   date_of_birth: string | null;
 };
@@ -16,6 +18,33 @@ const DEFAULT_BIRTHDAY_CRON = "0 8 * * *";
 let birthdayJobRunning = false;
 
 async function getTodaysBirthdayInvestors(now = new Date()) {
+  const investors = await getBirthdayInvestorCandidates();
+  const todayMonth = now.getMonth() + 1;
+  const todayDate = now.getDate();
+
+  return investors.filter((investor) => {
+    if (!investor.date_of_birth) {
+      return false;
+    }
+
+    const dob = new Date(investor.date_of_birth);
+    return dob.getMonth() + 1 === todayMonth && dob.getDate() === todayDate;
+  });
+}
+
+async function getBirthdayInvestorCandidates(): Promise<BirthdayInvestor[]> {
+  if (env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      return (await listWorkflowRecordsFromMongo("investors"))
+        .map(toBirthdayInvestor)
+        .filter((investor): investor is BirthdayInvestor => investor !== null);
+    } catch (error) {
+      console.warn("[birthday-sms-job] MongoDB investor read failed; falling back to Supabase", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const { data, error } = await adminSupabase
     .from("investors")
     .select("id, name, email, phone, date_of_birth")
@@ -26,17 +55,26 @@ async function getTodaysBirthdayInvestors(now = new Date()) {
     throw new Error(`Failed to load birthday investors: ${error.message}`);
   }
 
-  const todayMonth = now.getMonth() + 1;
-  const todayDate = now.getDate();
+  return (data ?? []).map(toBirthdayInvestor).filter((investor): investor is BirthdayInvestor => investor !== null);
+}
 
-  return ((data ?? []) as BirthdayInvestor[]).filter((investor) => {
-    if (!investor.date_of_birth) {
-      return false;
-    }
+function toBirthdayInvestor(candidate: Record<string, unknown>): BirthdayInvestor | null {
+  if (
+    typeof candidate.id !== "string"
+    || typeof candidate.name !== "string"
+    || typeof candidate.phone !== "string"
+    || typeof candidate.date_of_birth !== "string"
+  ) {
+    return null;
+  }
 
-    const dob = new Date(investor.date_of_birth);
-    return dob.getMonth() + 1 === todayMonth && dob.getDate() === todayDate;
-  });
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    email: typeof candidate.email === "string" ? candidate.email : null,
+    phone: candidate.phone,
+    date_of_birth: candidate.date_of_birth,
+  };
 }
 
 export async function runBirthdaySmsJob(now = new Date()) {
