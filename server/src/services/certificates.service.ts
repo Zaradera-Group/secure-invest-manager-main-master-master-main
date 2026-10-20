@@ -205,8 +205,73 @@ const stageConfig: Record<
 
 const isManagerEquivalentRole = (role: AppRole) => role === "investment_manager" || role === "accountant";
 
+type CreatorSummary = {
+  id: string;
+  full_name: string | null;
+  role: string | null;
+  roleLabel: string;
+  displayName: string;
+};
+
+const formatCreatorRoleLabel = (role: string | null | undefined) => {
+  switch (role) {
+    case "investment_manager":
+      return "Investment Manager";
+    case "accountant":
+      return "Accountant";
+    case "general_manager":
+      return "General Manager";
+    case "admin":
+      return "IT Manager";
+    case "super_admin":
+      return "CEO";
+    case "software_engineer":
+      return "Software Engineer";
+    case "staff":
+      return "Staff";
+    default:
+      return "Staff";
+  }
+};
+
 export class CertificatesService {
-  async getInvestorForRead(investorId: string) {
+  async listInvestorsForRead(actor: AuthenticatedUser) {
+    const isExecutive = actor.role === "admin" || actor.role === "super_admin";
+    let query = adminSupabase
+      .from("investors")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!isExecutive) {
+      query = query.eq("created_by", actor.id);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Failed to fetch investors: ${error.message}`);
+    }
+
+    const investors = data ?? [];
+
+    if (!isExecutive) {
+      return investors.map((investor) => ({ ...investor, creator: null }));
+    }
+
+    const creatorIds = [...new Set(
+      investors
+        .map((investor) => investor.created_by)
+        .filter((creatorId): creatorId is string => Boolean(creatorId)),
+    )];
+    const creatorDirectory = await this.getInvestorCreatorDirectory(creatorIds);
+
+    return investors.map((investor) => ({
+      ...investor,
+      creator: investor.created_by ? creatorDirectory.get(investor.created_by) ?? null : null,
+    }));
+  }
+
+  async getInvestorForRead(actor: AuthenticatedUser, investorId: string) {
     const { data, error } = await adminSupabase
       .from("investors")
       .select("*")
@@ -217,7 +282,53 @@ export class CertificatesService {
       throw new Error(`Investor not found: ${error?.message ?? investorId}`);
     }
 
+    const isExecutive = actor.role === "admin" || actor.role === "super_admin";
+    if (!isExecutive && data.created_by !== actor.id) {
+      throw new Error("Investor not found");
+    }
+
     return data;
+  }
+
+  private async getInvestorCreatorDirectory(userIds: string[]) {
+    if (!userIds.length) {
+      return new Map<string, CreatorSummary>();
+    }
+
+    const [profilesResult, rolesResult] = await Promise.all([
+      adminSupabase.from("profiles").select("id, full_name").in("id", userIds),
+      adminSupabase.from("user_roles").select("user_id, role").in("user_id", userIds),
+    ]);
+
+    if (profilesResult.error) {
+      throw new Error(`Failed to fetch investor creator profiles: ${profilesResult.error.message}`);
+    }
+
+    if (rolesResult.error) {
+      throw new Error(`Failed to fetch investor creator roles: ${rolesResult.error.message}`);
+    }
+
+    const profilesById = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile]));
+    const rolesByUserId = new Map((rolesResult.data ?? []).map((role) => [role.user_id, role.role]));
+
+    return new Map<string, CreatorSummary>(
+      userIds.map((userId) => {
+        const fullName = profilesById.get(userId)?.full_name?.trim() || null;
+        const role = rolesByUserId.get(userId) ?? null;
+        const roleLabel = formatCreatorRoleLabel(role);
+
+        return [
+          userId,
+          {
+            id: userId,
+            full_name: fullName,
+            role,
+            roleLabel,
+            displayName: fullName || roleLabel,
+          },
+        ];
+      }),
+    );
   }
 
   async createInvestor(actor: AuthenticatedUser, payload: unknown) {

@@ -3,6 +3,7 @@ import {
   createInvestor,
   deleteInvestorCompletely,
   getInvestor,
+  listInvestors,
   refreshInvestorCertificate,
   updateInvestorAndRefreshCertificate,
 } from "../controllers/investors.controller.js";
@@ -16,6 +17,12 @@ investorsRouter.post(
   "/",
   requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
   createInvestor,
+);
+
+investorsRouter.get(
+  "/",
+  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  listInvestors,
 );
 
 investorsRouter.get(

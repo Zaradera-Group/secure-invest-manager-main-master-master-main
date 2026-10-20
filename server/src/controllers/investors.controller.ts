@@ -53,8 +53,17 @@ export const createInvestor = async (request: Request, response: Response) => {
 export const getInvestor = async (request: Request, response: Response) => {
   try {
     const investorId = getRouteParam(request.params.id);
-    const investor = await service.getInvestorForRead(investorId);
+    const investor = await service.getInvestorForRead(request.authUser!, investorId);
     response.json(investor);
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const listInvestors = async (request: Request, response: Response) => {
+  try {
+    const investors = await service.listInvestorsForRead(request.authUser!);
+    response.json(investors);
   } catch (error) {
     handleError(response, error);
   }

@@ -269,6 +269,10 @@ async function getVisibleInvestorsForRole(role: string | null | undefined, userI
   return (data ?? []).map((investor) => ({ ...investor, creator: null })) as InvestorWithCreator[];
 }
 
+async function getVisibleInvestorsFromBackend() {
+  return callInvestorBackend<InvestorWithCreator[]>('/investors', 'GET');
+}
+
 async function getDashboardInvestorRows(scope: DashboardScope, role: string | null | undefined, userId?: string | null) {
   const investors = await getDashboardInvestorBaseRows();
 
@@ -299,7 +303,7 @@ export function useInvestors(page = 0, pageSize = 50) {
     queryFn: async () => {
       const from = page * pageSize;
       const to = from + pageSize - 1;
-      const visibleInvestors = await getVisibleInvestorsForRole(role, user?.id);
+      const visibleInvestors = await getVisibleInvestorsFromBackend();
       return visibleInvestors.slice(from, to + 1);
     },
     staleTime: 5 * 60 * 1000,
@@ -323,7 +327,7 @@ export function useInvestorList(options: {
     queryFn: async () => {
       const from = page * pageSize;
       const to = from + pageSize - 1;
-      let visibleInvestors = await getVisibleInvestorsForRole(role, user?.id);
+      let visibleInvestors = await getVisibleInvestorsFromBackend();
 
       if (statusFilter !== 'all') {
         visibleInvestors = visibleInvestors.filter((investor) => investor.liquidation_status === statusFilter);
@@ -362,21 +366,8 @@ export async function exportInvestors(options: {
   typeFilter?: string;
   categoryFilter?: string;
 }) {
-  const { data: { user } } = await supabase.auth.getUser();
-  let role: string | null = null;
-
-  if (user?.id) {
-    const { data: roleRow } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    role = roleRow?.role ?? null;
-  }
-
   const { search = '', statusFilter = 'all', typeFilter = 'all', categoryFilter = 'all' } = options;
-  let visibleInvestors = await getVisibleInvestorsForRole(role, user?.id);
+  let visibleInvestors = await getVisibleInvestorsFromBackend();
 
   if (statusFilter !== 'all') {
     visibleInvestors = visibleInvestors.filter((investor) => investor.liquidation_status === statusFilter);
