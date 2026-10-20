@@ -1,4 +1,5 @@
 import { adminSupabase } from "../lib/supabase.js";
+import { z } from "zod";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
 
 type WorkflowNotificationRole = "manager" | "general_manager" | "ceo" | "investor";
@@ -16,6 +17,15 @@ type DashboardNotificationRecord = {
   recipient_user_id: string | null;
   recipient_email: string | null;
 };
+
+const notificationPreferencesSchema = z.object({
+  email_enabled: z.boolean().optional(),
+  maturity_reminders: z.boolean().optional(),
+  payment_reminders: z.boolean().optional(),
+  monthly_reports: z.boolean().optional(),
+  birthday_notifications: z.boolean().optional(),
+  reminder_days_before: z.array(z.number().int().min(0).max(365)).min(1).max(30).optional(),
+});
 
 const getWorkflowNotificationRole = (role: AppRole): WorkflowNotificationRole => {
   switch (role) {
@@ -46,6 +56,47 @@ const isVisibleToActor = (notification: DashboardNotificationRecord, actor: Auth
 };
 
 export class NotificationsService {
+  async getNotificationPreferences(actor: AuthenticatedUser) {
+    const { data, error } = await adminSupabase
+      .from("notification_preferences")
+      .select("*")
+      .eq("user_id", actor.id)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to fetch notification preferences: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async updateNotificationPreferences(actor: AuthenticatedUser, payload: unknown) {
+    const updates = notificationPreferencesSchema.parse(payload);
+    const existing = await this.getNotificationPreferences(actor);
+    const { data, error } = await adminSupabase
+      .from("notification_preferences")
+      .upsert(
+        {
+          user_id: actor.id,
+          email_enabled: updates.email_enabled ?? existing?.email_enabled ?? true,
+          maturity_reminders: updates.maturity_reminders ?? existing?.maturity_reminders ?? true,
+          payment_reminders: updates.payment_reminders ?? existing?.payment_reminders ?? true,
+          monthly_reports: updates.monthly_reports ?? existing?.monthly_reports ?? true,
+          birthday_notifications: updates.birthday_notifications ?? existing?.birthday_notifications ?? true,
+          reminder_days_before: updates.reminder_days_before ?? existing?.reminder_days_before ?? [7, 3, 1],
+        },
+        { onConflict: "user_id" },
+      )
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Failed to update notification preferences: ${error?.message ?? "Unknown error"}`);
+    }
+
+    return data;
+  }
+
   async getDashboardNotifications(actor: AuthenticatedUser, limit: number) {
     const { data, error } = await adminSupabase
       .from("notifications")

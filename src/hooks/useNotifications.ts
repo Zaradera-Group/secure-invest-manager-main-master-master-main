@@ -99,7 +99,7 @@ export interface JobRunSummary {
   };
 }
 
-async function getNotificationAuditRecords<T>(path: string): Promise<T> {
+async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH' = 'GET', body?: unknown): Promise<T> {
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
 
@@ -107,7 +107,12 @@ async function getNotificationAuditRecords<T>(path: string): Promise<T> {
   if (!token) throw new Error('You must be signed in to view notification audit data.');
 
   const response = await fetch(`${NOTIFICATIONS_API_URL}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
   const raw = await response.text();
   let payload: { message?: string } | T | null = null;
@@ -128,6 +133,8 @@ async function getNotificationAuditRecords<T>(path: string): Promise<T> {
   return payload as T;
 }
 
+const getNotificationAuditRecords = <T>(path: string) => callNotificationsBackend<T>(path);
+
 export function useNotificationPreferences() {
   const { user, loading } = useAuth();
 
@@ -137,19 +144,7 @@ export function useNotificationPreferences() {
     queryFn: async (): Promise<NotificationPreferences | null> => {
       if (!user) throw new Error('User not authenticated');
 
-      const { data, error } = await supabase
-        .from('notification_preferences')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') { // No rows returned
-          return null;
-        }
-        throw error;
-      }
-      return data;
+      return callNotificationsBackend<NotificationPreferences | null>('/notifications/preferences');
     },
   });
 }
@@ -161,35 +156,8 @@ export function useUpdateNotificationPreferences() {
   return useMutation({
     mutationFn: async (preferences: Partial<Omit<NotificationPreferences, 'created_at' | 'updated_at'>>) => {
       if (!user) throw new Error('User not authenticated');
-
-      const { data: existingPreferences, error: existingPreferencesError } = await supabase
-        .from('notification_preferences')
-        .select('*')
-        .eq('user_id', preferences.user_id || user.id)
-        .maybeSingle();
-
-      if (existingPreferencesError && existingPreferencesError.code !== 'PGRST116') {
-        throw existingPreferencesError;
-      }
-
-      const { data, error } = await supabase
-        .from('notification_preferences')
-        .upsert({
-          user_id: preferences.user_id || user.id,
-          email_enabled: preferences.email_enabled ?? existingPreferences?.email_enabled ?? true,
-          maturity_reminders: preferences.maturity_reminders ?? existingPreferences?.maturity_reminders ?? true,
-          payment_reminders: preferences.payment_reminders ?? existingPreferences?.payment_reminders ?? true,
-          monthly_reports: preferences.monthly_reports ?? existingPreferences?.monthly_reports ?? false,
-          birthday_notifications: preferences.birthday_notifications ?? existingPreferences?.birthday_notifications ?? true,
-          reminder_days_before: preferences.reminder_days_before ?? existingPreferences?.reminder_days_before ?? [7, 3, 1],
-        }, {
-          onConflict: 'user_id',
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const { user_id: _ignoredUserId, ...updates } = preferences;
+      return callNotificationsBackend<NotificationPreferences>('/notifications/preferences', 'PATCH', updates);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });

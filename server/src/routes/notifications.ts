@@ -7,9 +7,11 @@ import {
   getEmailNotificationAudit,
   getJobRunAudit,
   getNotificationJobAudit,
+  getNotificationPreferences,
   getUnreadDashboardNotificationCount,
   markAllDashboardNotificationsRead,
   markDashboardNotificationRead,
+  updateNotificationPreferences,
 } from "../controllers/notifications.controller.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 
@@ -23,6 +25,8 @@ notificationsRouter.get("/dashboard", requireRole(...staffRoles), getDashboardNo
 notificationsRouter.get("/dashboard/unread-count", requireRole(...staffRoles), getUnreadDashboardNotificationCount);
 notificationsRouter.patch("/dashboard/read-all", requireRole(...staffRoles), markAllDashboardNotificationsRead);
 notificationsRouter.patch("/dashboard/:id/read", requireRole(...staffRoles), markDashboardNotificationRead);
+notificationsRouter.get("/preferences", requireRole(...staffRoles), getNotificationPreferences);
+notificationsRouter.patch("/preferences", requireRole(...staffRoles), updateNotificationPreferences);
 
 notificationsRouter.get("/audit/email", requireRole("admin", "super_admin"), getEmailNotificationAudit);
 notificationsRouter.get("/audit/jobs", requireRole("admin", "super_admin"), getNotificationJobAudit);

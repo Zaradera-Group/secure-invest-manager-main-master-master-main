@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { ZodError } from "zod";
 import { NotificationsService } from "../services/notifications.service.js";
 
 const service = new NotificationsService();
@@ -16,7 +17,23 @@ const getBoundedInteger = (value: unknown, fallback: number, maximum: number) =>
 
 const handleError = (response: Response, error: unknown) => {
   const message = error instanceof Error ? error.message : "Unexpected error";
-  response.status(message.includes("not found") ? 404 : 500).json({ message });
+  response.status(error instanceof ZodError ? 400 : message.includes("not found") ? 404 : 500).json({ message });
+};
+
+export const getNotificationPreferences = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.getNotificationPreferences(request.authUser!));
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const updateNotificationPreferences = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.updateNotificationPreferences(request.authUser!, request.body));
+  } catch (error) {
+    handleError(response, error);
+  }
 };
 
 export const getDashboardNotifications = async (request: Request, response: Response) => {
