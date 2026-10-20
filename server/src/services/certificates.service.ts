@@ -213,6 +213,21 @@ type CreatorSummary = {
   displayName: string;
 };
 
+type DashboardScope = "staff" | "executive" | "all";
+
+type DashboardInvestorRow = {
+  id: string;
+  name: string;
+  investment_amount: number;
+  maturity_date: string;
+  liquidation_status: string;
+  investment_type: string;
+  created_by: string | null;
+  currency_code: string | null;
+  expected_maturity_amount: number;
+  client_bank: string;
+};
+
 const formatCreatorRoleLabel = (role: string | null | undefined) => {
   switch (role) {
     case "investment_manager":
@@ -269,6 +284,87 @@ export class CertificatesService {
       ...investor,
       creator: investor.created_by ? creatorDirectory.get(investor.created_by) ?? null : null,
     }));
+  }
+
+  async getDashboardPortfolioSummary(actor: AuthenticatedUser, scope: DashboardScope) {
+    const investors = await this.getDashboardInvestorsForRead(actor, scope);
+    const now = new Date();
+    const maturingSoon = investors.filter((investor) => {
+      const maturityDate = new Date(investor.maturity_date);
+      const diffDays = Math.ceil((maturityDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return diffDays >= 0 && diffDays <= 30;
+    }).length;
+    const foreignCurrencyCodes = Array.from(
+      new Set(
+        investors
+          .map((investor) => (investor.currency_code ?? "NGN").toUpperCase())
+          .filter((currencyCode) => currencyCode !== "NGN"),
+      ),
+    ).sort();
+
+    return {
+      user_id: actor.id,
+      total_investments: investors.length,
+      total_investment_value: investors.reduce((sum, investor) => sum + Number(investor.investment_amount ?? 0), 0),
+      active_investments: investors.filter((investor) => investor.liquidation_status === "Active").length,
+      maturing_soon: maturingSoon,
+      liquidated_investments: investors.filter((investor) => investor.liquidation_status === "Liquidated").length,
+      foreign_currency_investments: investors.filter(
+        (investor) => (investor.currency_code ?? "NGN").toUpperCase() !== "NGN",
+      ).length,
+      foreign_currency_codes: foreignCurrencyCodes,
+    };
+  }
+
+  async getDashboardInvestmentTypeSummary(actor: AuthenticatedUser, scope: DashboardScope) {
+    const investors = await this.getDashboardInvestorsForRead(actor, scope);
+    const totals = new Map<string, { investor_count: number; total_investment_value: number }>();
+
+    for (const investor of investors) {
+      const current = totals.get(investor.investment_type) ?? { investor_count: 0, total_investment_value: 0 };
+      totals.set(investor.investment_type, {
+        investor_count: current.investor_count + 1,
+        total_investment_value: current.total_investment_value + Number(investor.investment_amount ?? 0),
+      });
+    }
+
+    return Array.from(totals.entries())
+      .map(([investment_type, total]) => ({
+        user_id: actor.id,
+        investment_type,
+        investor_count: total.investor_count,
+        total_investment_value: total.total_investment_value,
+      }))
+      .sort((left, right) => left.investment_type.localeCompare(right.investment_type));
+  }
+
+  async getDashboardUpcomingMaturities(actor: AuthenticatedUser, scope: DashboardScope, limit: number) {
+    const investors = await this.getDashboardInvestorsForRead(actor, scope);
+
+    return investors
+      .filter((investor) => investor.liquidation_status === "Active")
+      .sort((left, right) => new Date(left.maturity_date).getTime() - new Date(right.maturity_date).getTime())
+      .slice(0, limit);
+  }
+
+  async getMaturityAlerts(actor: AuthenticatedUser, page: number, pageSize: number) {
+    const scope: DashboardScope = actor.role === "admin" || actor.role === "super_admin" ? "all" : "staff";
+    const investors = await this.getDashboardInvestorsForRead(actor, scope);
+    const from = page * pageSize;
+
+    return investors
+      .filter((investor) => investor.liquidation_status === "Active")
+      .sort((left, right) => new Date(left.maturity_date).getTime() - new Date(right.maturity_date).getTime())
+      .slice(from, from + pageSize)
+      .map((investor) => ({
+        id: investor.id,
+        name: investor.name,
+        maturity_date: investor.maturity_date,
+        liquidation_status: investor.liquidation_status,
+        investment_type: investor.investment_type,
+        expected_maturity_amount: investor.expected_maturity_amount,
+        client_bank: investor.client_bank,
+      }));
   }
 
   async getInvestorForRead(actor: AuthenticatedUser, investorId: string) {
@@ -329,6 +425,33 @@ export class CertificatesService {
         ];
       }),
     );
+  }
+
+  private async getDashboardInvestorsForRead(actor: AuthenticatedUser, scope: DashboardScope) {
+    const { data, error } = await adminSupabase
+      .from("investors")
+      .select("id,name,investment_amount,maturity_date,liquidation_status,investment_type,created_by,currency_code,expected_maturity_amount,client_bank");
+
+    if (error) {
+      throw new Error(`Failed to fetch dashboard investors: ${error.message}`);
+    }
+
+    const investors = (data ?? []) as DashboardInvestorRow[];
+    const isExecutive = actor.role === "admin" || actor.role === "super_admin";
+
+    if (!isExecutive) {
+      return investors.filter((investor) => investor.created_by === actor.id);
+    }
+
+    if (scope === "executive") {
+      return investors.filter((investor) => investor.created_by === actor.id);
+    }
+
+    if (scope === "staff") {
+      return investors.filter((investor) => investor.created_by !== actor.id);
+    }
+
+    return investors;
   }
 
   async createInvestor(actor: AuthenticatedUser, payload: unknown) {
