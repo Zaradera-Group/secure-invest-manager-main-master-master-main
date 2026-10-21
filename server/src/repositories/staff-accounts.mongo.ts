@@ -6,6 +6,7 @@ export type StaffAccount = {
   email: string;
   role: AppRole;
   allowedAuthUserId: string;
+  legacyUserId: string;
   fullName: string | null;
   isActive: boolean;
   provisionedAt: string;
@@ -22,6 +23,7 @@ async function getCollection() {
     await Promise.all([
       collection.createIndex({ auth0Subject: 1 }, { unique: true }),
       collection.createIndex({ email: 1 }, { unique: true }),
+      collection.createIndex({ legacyUserId: 1 }, { unique: true }),
       collection.createIndex({ isActive: 1, role: 1 }),
     ]);
   })();

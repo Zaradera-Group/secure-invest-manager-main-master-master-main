@@ -101,8 +101,8 @@ AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
 3. Open `/auth0-test` and sign in.
 4. Confirm Auth0 prompts for MFA.
 5. Confirm the page reports `Email verified: Yes`, the expected role, and `Staff access claim: Recognized`.
-6. Select **Link Auth0 account to staff record**. It succeeds only when the Auth0 email and single role match an active Zaradera allowlist record; this creates the MongoDB `staff_accounts` mapping.
-7. Select **Validate Render identity** and confirm that Render accepts the mapped Auth0 identity.
+6. Select **Link Auth0 account to staff record**. It succeeds only when the Auth0 email and single role match an active Zaradera allowlist record and the same email already has the same role in the live Zaradera staff account. This creates the MongoDB `staff_accounts` mapping, including the canonical internal staff ID.
+7. Select **Validate Render identity** and confirm that Render accepts the mapped Auth0 identity. Render will use the canonical internal staff ID, preserving existing creator ownership and notification scope for a later rollout.
 8. Confirm the user cannot access live investor or certificate data through this route.
 
 Only after that test passes should we add Auth0 JWT validation to the Render API and implement a controlled parallel sign-in rollout.

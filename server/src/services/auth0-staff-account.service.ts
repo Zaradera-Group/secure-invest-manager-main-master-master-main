@@ -24,9 +24,9 @@ const normalizeRole = (value: unknown): AppRole | null => {
 export class Auth0StaffAccountMappingError extends Error {}
 
 export class Auth0StaffAccountService {
-  async assertMappedActiveAccount(actor: AuthenticatedUser) {
+  async resolveMappedActiveUser(actor: AuthenticatedUser): Promise<AuthenticatedUser> {
     if (actor.provider !== "auth0") {
-      return;
+      return actor;
     }
 
     const account = await getStaffAccountByAuth0Subject(actor.id);
@@ -37,6 +37,11 @@ export class Auth0StaffAccountService {
     if (account.email !== actor.email || account.role !== actor.role) {
       throw new Auth0StaffAccountMappingError("Auth0 identity does not match its Zaradera staff mapping");
     }
+
+    return {
+      ...actor,
+      id: account.legacyUserId,
+    };
   }
 
   async provision(actor: AuthenticatedUser) {
@@ -61,6 +66,8 @@ export class Auth0StaffAccountService {
       throw new Error("Auth0 role does not match the approved Zaradera staff role");
     }
 
+    const legacyUserId = await this.findLegacyUserId(actor.email, actor.role);
+
     const existingByEmail = await getStaffAccountByEmail(actor.email);
     if (existingByEmail && existingByEmail.auth0Subject !== actor.id) {
       throw new Error("This Zaradera staff email is already linked to a different Auth0 account");
@@ -71,6 +78,7 @@ export class Auth0StaffAccountService {
       email: actor.email,
       role: actor.role,
       allowedAuthUserId: data.id,
+      legacyUserId,
       fullName: data.full_name?.trim() || null,
       isActive: true,
     });
@@ -81,7 +89,47 @@ export class Auth0StaffAccountService {
       auth0Subject: account.auth0Subject,
       email: account.email,
       role: account.role,
+      legacyUserId: account.legacyUserId,
       lastVerifiedAt: account.lastVerifiedAt,
     };
+  }
+
+  private async findLegacyUserId(email: string, role: AppRole) {
+    let page = 1;
+
+    while (true) {
+      const { data, error } = await adminSupabase.auth.admin.listUsers({ page, perPage: 1_000 });
+      if (error) {
+        throw new Error(`Failed to resolve the existing Zaradera staff user: ${error.message}`);
+      }
+
+      const legacyUser = data.users.find((user) => user.email?.trim().toLowerCase() === email);
+      if (legacyUser) {
+        const { data: roleRecord, error: roleError } = await adminSupabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", legacyUser.id)
+          .maybeSingle();
+
+        if (roleError) {
+          throw new Error(`Failed to verify the existing Zaradera staff role: ${roleError.message}`);
+        }
+
+        const legacyRole = normalizeRole(roleRecord?.role);
+        if (legacyRole !== role) {
+          throw new Error("The existing Zaradera staff user does not have the same approved role as Auth0");
+        }
+
+        return legacyUser.id;
+      }
+
+      if (data.users.length < 1_000) {
+        break;
+      }
+
+      page += 1;
+    }
+
+    throw new Error("No existing Zaradera staff user was found for this Auth0 email");
   }
 }

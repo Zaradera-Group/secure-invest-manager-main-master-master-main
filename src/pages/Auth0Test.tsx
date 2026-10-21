@@ -185,6 +185,7 @@ type StaffAccountMapping = {
   auth0Subject: string;
   email: string;
   role: string;
+  legacyUserId: string;
   lastVerifiedAt: string;
 };
 

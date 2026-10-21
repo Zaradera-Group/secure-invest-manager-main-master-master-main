@@ -102,8 +102,7 @@ export const requireMappedDualAuth = async (request: Request, response: Response
     if (isAuth0Enabled()) {
       try {
         const auth0User = await getUserFromAuth0BearerToken(token);
-        await auth0StaffAccounts.assertMappedActiveAccount(auth0User);
-        request.authUser = auth0User;
+        request.authUser = await auth0StaffAccounts.resolveMappedActiveUser(auth0User);
         next();
         return;
       } catch (error) {
