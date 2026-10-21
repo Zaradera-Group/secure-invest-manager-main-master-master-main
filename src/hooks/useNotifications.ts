@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 
 const NOTIFICATIONS_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 
@@ -100,11 +100,7 @@ export interface JobRunSummary {
 }
 
 async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH' | 'POST' = 'GET', body?: unknown): Promise<T> {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-
-  const token = data.session?.access_token;
-  if (!token) throw new Error('You must be signed in to view notification audit data.');
+  const token = await getBackendAccessToken('You must be signed in to view notification audit data.');
 
   const response = await fetch(`${NOTIFICATIONS_API_URL}${path}`, {
     method,

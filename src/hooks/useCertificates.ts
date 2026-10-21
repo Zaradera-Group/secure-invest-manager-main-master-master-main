@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 import type { Database } from '@/integrations/supabase/types';
 
 type AppRole = Database['public']['Enums']['app_role'];
@@ -494,12 +495,7 @@ async function ensureCertificateMfaReady(input: {
 }
 
 async function getActiveAccessToken() {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) {
-    throw sessionError;
-  }
-
-  return sessionData.session?.access_token ?? null;
+  return getBackendAccessToken();
 }
 
 async function callCertificateApiWithParsedResponse(endpoint: string, requestBody: unknown, accessToken: string) {

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 
 const API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 const APPROVAL_AVAILABILITY_PATH = '/settings/approval-availability';
@@ -9,11 +9,7 @@ type ApprovalAvailabilityResponse = {
 };
 
 async function callApprovalAvailabilityApi<T>(method: 'GET' | 'PATCH', body?: unknown): Promise<T> {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-
-  const accessToken = data.session?.access_token;
-  if (!accessToken) throw new Error('Your session has expired. Please sign in again.');
+  const accessToken = await getBackendAccessToken();
 
   const response = await fetch(`${API_URL}${APPROVAL_AVAILABILITY_PATH}`, {
     method,

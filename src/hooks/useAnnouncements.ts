@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { getBackendAuthorizationHeaders } from '@/lib/backendAccessToken';
 
 const API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 
@@ -20,11 +20,7 @@ function normalizeAnnouncementStatus(status: unknown): AnnouncementRow['status']
 }
 
 async function getAuthorizationHeaders() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-  if (!data.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
-
-  return { Authorization: `Bearer ${data.session.access_token}` };
+  return getBackendAuthorizationHeaders();
 }
 
 async function requestAnnouncements<T>(path: string, options?: RequestInit): Promise<T> {

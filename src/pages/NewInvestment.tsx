@@ -16,7 +16,7 @@ import { INVESTOR_CATEGORY_OPTIONS, type InvestorCategory, getInvestorCategoryLa
 import { useToast } from '@/hooks/use-toast';
 import { useCreateInvestor, useInvestor, useUpdateInvestor } from '@/hooks/useInvestors';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 import { fetchPublicIntakeRequest, type PublicIntakeRequest } from '@/hooks/usePublicIntakeRequests';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -275,16 +275,14 @@ export default function NewInvestment() {
 
     setIsUploadingPassport(true);
     try {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!sessionData.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
+      const accessToken = await getBackendAccessToken();
 
       const dataBase64 = await readFileAsBase64(file);
       const response = await fetch(`${IDENTITY_API_URL}/identity/passport`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionData.session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           fileName: file.name,

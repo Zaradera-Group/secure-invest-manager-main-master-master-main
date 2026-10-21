@@ -4,18 +4,14 @@ import { Link } from 'react-router-dom';
 import Dashboard from './Dashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/integrations/supabase/client';
 import { PublicIntakeLinkCard } from '@/components/public-intake/PublicIntakeLinkCard';
+import { getBackendAuthorizationHeaders } from '@/lib/backendAccessToken';
 
 const ADMIN_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 
 async function callAdminBackend<T>(path: string): Promise<T> {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-  if (!data.session?.access_token) throw new Error('You must be signed in to view executive oversight data.');
-
   const response = await fetch(`${ADMIN_API_URL}${path}`, {
-    headers: { Authorization: `Bearer ${data.session.access_token}` },
+    headers: await getBackendAuthorizationHeaders('You must be signed in to view executive oversight data.'),
   });
   const payload = await response.json().catch(() => null) as { message?: string } | T | null;
   if (!response.ok) {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 
 const NOTIFICATIONS_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
@@ -52,11 +52,7 @@ function mapNotificationRecord(notification: Record<string, unknown>): WorkflowN
 }
 
 async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH') {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-
-  const token = data.session?.access_token;
-  if (!token) throw new Error('You must be signed in to perform this action.');
+  const token = await getBackendAccessToken('You must be signed in to perform this action.');
 
   const response = await fetch(`${NOTIFICATIONS_API_URL}${path}`, {
     method,

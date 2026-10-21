@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 import type { Database } from '@/integrations/supabase/types';
 import type { QueryClient } from '@tanstack/react-query';
 
@@ -78,15 +78,7 @@ function invalidateInvestorUpdateSideEffects(queryClient: QueryClient) {
 }
 
 async function getAuthenticatedBackendToken() {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-
-  const token = data.session?.access_token ?? null;
-  if (!token) {
-    throw new Error('You must be signed in to perform this action.');
-  }
-
-  return token;
+  return getBackendAccessToken('You must be signed in to perform this action.');
 }
 
 async function callInvestorBackend<T>(
