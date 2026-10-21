@@ -88,7 +88,7 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   PUBLIC_INTAKE_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
-  PUBLIC_INTAKE_OTP_STORAGE_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
+  PUBLIC_INTAKE_OTP_STORAGE_MODE: z.enum(["supabase", "mongo"]).default("mongo"),
   NOTIFICATIONS_MONGO_MIRROR_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()
