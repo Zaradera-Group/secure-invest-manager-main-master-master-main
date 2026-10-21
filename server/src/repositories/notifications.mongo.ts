@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { randomUUID } from "node:crypto";
 import { getMongoDb, isMongoConfigured } from "../lib/mongodb.js";
 
 type NotificationMirrorInput = {
@@ -240,4 +241,61 @@ export async function countUnreadDashboardNotificationsFromMongo(filter: Notific
 
   const db = await getMongoDb();
   return db.collection("notifications").countDocuments({ ...buildVisibilityFilter(filter), isRead: false });
+}
+
+export async function createNativeDashboardNotification(input: {
+  dedupeKey: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  userRole: "manager" | "general_manager" | "ceo";
+  investorId: string;
+  title: string;
+  detail: string;
+  actionPath: string;
+}) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const now = new Date().toISOString();
+  const id = `mongo:${randomUUID()}`;
+  const notification = {
+    id,
+    certificate_id: null,
+    user_role: input.userRole,
+    recipient_user_id: input.recipientUserId,
+    recipient_email: input.recipientEmail,
+    title: input.title,
+    detail: input.detail,
+    message: input.detail,
+    action_path: input.actionPath,
+    is_read: false,
+    read_at: null,
+    created_at: now,
+  };
+  const result = await (await getMongoDb()).collection("notifications").updateOne(
+    { nativeDedupeKey: input.dedupeKey },
+    {
+      $setOnInsert: {
+        supabaseNotificationId: id,
+        nativeDedupeKey: input.dedupeKey,
+        certificateId: null,
+        recipientUserId: input.recipientUserId,
+        recipientEmail: input.recipientEmail,
+        userRole: input.userRole,
+        title: input.title,
+        detail: input.detail,
+        message: input.detail,
+        actionPath: input.actionPath,
+        isRead: false,
+        readAt: null,
+        createdAt: now,
+        source: "mongo_native",
+        rawSupabaseRecord: notification,
+        insertedAt: now,
+      },
+    },
+    { upsert: true },
+  );
+  return { id, inserted: result.upsertedCount === 1 };
 }

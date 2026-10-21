@@ -6,9 +6,23 @@ type NotificationPreferenceRecord = Record<string, unknown> & {
   user_id: string;
 };
 
+export type MongoNotificationPreferences = {
+  id: string;
+  user_id: string;
+  email_enabled: boolean;
+  maturity_reminders: boolean;
+  payment_reminders: boolean;
+  monthly_reports: boolean;
+  birthday_notifications: boolean;
+  reminder_days_before: number[];
+  created_at: string;
+  updated_at: string;
+};
+
 type MirroredNotificationPreference = {
   supabaseId: string;
   userId: string;
+  preferences?: MongoNotificationPreferences;
   rawSupabaseRecord?: NotificationPreferenceRecord;
 };
 
@@ -45,6 +59,7 @@ export async function mirrorNotificationPreferencesToMongo(records: Notification
           $set: {
             supabaseId: record.id,
             userId: record.user_id,
+            preferences: record as MongoNotificationPreferences,
             rawSupabaseRecord: record,
             mirroredAt,
           },
@@ -71,7 +86,45 @@ export function mirrorNotificationPreferencesToMongoSafely(record: NotificationP
 export async function getNotificationPreferencesFromMongo(userId: string) {
   const record = await (await getCollection()).findOne(
     { userId },
-    { projection: { rawSupabaseRecord: 1 } },
+    { projection: { preferences: 1, rawSupabaseRecord: 1 } },
   );
-  return record?.rawSupabaseRecord ?? null;
+  return record?.preferences ?? record?.rawSupabaseRecord ?? null;
+}
+
+export async function upsertNotificationPreferencesInMongo(
+  userId: string,
+  updates: Partial<Omit<MongoNotificationPreferences, "id" | "user_id" | "created_at" | "updated_at">>,
+  existing: MongoNotificationPreferences | null,
+) {
+  const collection = await getCollection();
+  const now = new Date().toISOString();
+  const preferences: MongoNotificationPreferences = {
+    id: existing?.id ?? crypto.randomUUID(),
+    user_id: userId,
+    email_enabled: updates.email_enabled ?? existing?.email_enabled ?? true,
+    maturity_reminders: updates.maturity_reminders ?? existing?.maturity_reminders ?? true,
+    payment_reminders: updates.payment_reminders ?? existing?.payment_reminders ?? true,
+    monthly_reports: updates.monthly_reports ?? existing?.monthly_reports ?? true,
+    birthday_notifications: updates.birthday_notifications ?? existing?.birthday_notifications ?? true,
+    reminder_days_before: updates.reminder_days_before ?? existing?.reminder_days_before ?? [7, 3, 1],
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
+  };
+
+  await collection.updateOne(
+    { userId },
+    {
+      $set: {
+        userId,
+        supabaseId: preferences.id,
+        preferences,
+        mirroredAt: now,
+        source: "mongo",
+      },
+      $setOnInsert: { insertedAt: now },
+    },
+    { upsert: true },
+  );
+
+  return preferences;
 }

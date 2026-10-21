@@ -21,14 +21,16 @@ import {
 } from "../lib/sms.js";
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
-import { isMongoConfigured } from "../lib/mongodb.js";
-import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import { getMongoDb, isMongoConfigured } from "../lib/mongodb.js";
+import { mirrorNotificationToMongo, mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import { enqueueNotificationDelivery } from "../repositories/notification-delivery-outbox.mongo.js";
 import {
   deleteWorkflowRecordsByFieldFromMongoSafely,
+  deleteWorkflowRecordsFromMongo,
   deleteWorkflowRecordsFromMongoSafely,
   getWorkflowRecordFromMongo,
   listWorkflowRecordsFromMongo,
+  mirrorWorkflowRecordsToMongo,
   mirrorWorkflowRecordsToMongoSafely,
 } from "../repositories/workflow-data.mongo.js";
 import {
@@ -507,7 +509,9 @@ export class CertificatesService {
   }
 
   private async readInvestors(): Promise<Array<Record<string, any>>> {
-    if (env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         return await listWorkflowRecordsFromMongo("investors") as Array<Record<string, any>>;
       } catch (error) {
@@ -530,7 +534,9 @@ export class CertificatesService {
   }
 
   private async readInvestor(investorId: string): Promise<Record<string, any> | null> {
-    if (env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         const record = await getWorkflowRecordFromMongo("investors", investorId);
         if (record) return record as Record<string, any>;
@@ -570,12 +576,24 @@ export class CertificatesService {
       throw new Error(`Failed to create investor: ${error?.message ?? "Unknown error"}`);
     }
 
-    mirrorWorkflowRecordsToMongoSafely({
-      table: "investors",
-      records: [data as Record<string, unknown>],
-    });
+    await this.mirrorInvestorWrite(data as Record<string, unknown>);
 
     return data;
+  }
+
+  private async mirrorInvestorWrite(record: Record<string, unknown>) {
+    const input = { table: "investors" as const, records: [record] };
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while WORKFLOW_DATA_MONGO_WRITE_MODE=dual");
+      }
+      const mirrored = await mirrorWorkflowRecordsToMongo(input);
+      if (mirrored !== 1) {
+        throw new Error("Investor was saved in Supabase but could not be mirrored to MongoDB");
+      }
+      return;
+    }
+    mirrorWorkflowRecordsToMongoSafely(input);
   }
 
   async getLatestCertificateForInvestor(
@@ -607,7 +625,9 @@ export class CertificatesService {
   }
 
   private async readCertificatesForRead(): Promise<CertificateRecord[]> {
-    if (env.CERTIFICATES_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const preferMongo = env.CERTIFICATES_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         return await listWorkflowRecordsFromMongo("certificates") as unknown as CertificateRecord[];
       } catch (error) {
@@ -634,7 +654,9 @@ export class CertificatesService {
     normalizedEmail: string,
     investorName: string,
   ): Promise<CertificateRecord | null> {
-    if (env.CERTIFICATES_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const preferMongo = env.CERTIFICATES_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         const certificates = await listWorkflowRecordsFromMongo("certificates") as unknown as CertificateRecord[];
         const matches = certificates.filter((certificate) => {
@@ -792,10 +814,25 @@ export class CertificatesService {
     await adminSupabase.from("investor_certificates").delete().eq("investor_id", investor.id);
     await adminSupabase.from("investors").delete().eq("id", investor.id);
 
-    deleteWorkflowRecordsFromMongoSafely({ table: "investors", supabaseIds: [investor.id] });
-    deleteWorkflowRecordsFromMongoSafely({ table: "certificates", supabaseIds: certificateIds });
-    deleteWorkflowRecordsByFieldFromMongoSafely("certificate_approval_events", "certificateId", certificateIds);
-    deleteWorkflowRecordsByFieldFromMongoSafely("investor_certificates", "investorId", [investor.id]);
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while WORKFLOW_DATA_MONGO_WRITE_MODE=dual");
+      }
+      await Promise.all([
+        deleteWorkflowRecordsFromMongo({ table: "investors", supabaseIds: [investor.id] }),
+        deleteWorkflowRecordsFromMongo({ table: "certificates", supabaseIds: certificateIds }),
+      ]);
+      const db = await getMongoDb();
+      await Promise.all([
+        db.collection("certificate_approval_events").deleteMany({ certificateId: { $in: certificateIds } }),
+        db.collection("investor_certificates").deleteMany({ investorId: investor.id }),
+      ]);
+    } else {
+      deleteWorkflowRecordsFromMongoSafely({ table: "investors", supabaseIds: [investor.id] });
+      deleteWorkflowRecordsFromMongoSafely({ table: "certificates", supabaseIds: certificateIds });
+      deleteWorkflowRecordsByFieldFromMongoSafely("certificate_approval_events", "certificateId", certificateIds);
+      deleteWorkflowRecordsByFieldFromMongoSafely("investor_certificates", "investorId", [investor.id]);
+    }
 
     await insertAuditLog({
       action: "investor_deleted_permanently",
@@ -845,10 +882,7 @@ export class CertificatesService {
       throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
     }
 
-    mirrorWorkflowRecordsToMongoSafely({
-      table: "investors",
-      records: [data as Record<string, unknown>],
-    });
+    await this.mirrorInvestorWrite(data as Record<string, unknown>);
 
     const shouldCreateTransactionCertificateFlag = shouldCreateTransactionCertificate(investorBeforeUpdate, input);
     const issueDate = shouldCreateTransactionCertificateFlag
@@ -971,6 +1005,8 @@ export class CertificatesService {
     if (error || !data) {
       throw new Error(`Failed to create certificate: ${error?.message ?? "Unknown error"}`);
     }
+
+    await this.mirrorCertificateWrite(data as unknown as Record<string, unknown>);
 
     const refreshedCertificate = await this.persistPdf(data, {
       investorId: input.investorId,
@@ -1538,11 +1574,19 @@ export class CertificatesService {
       throw new Error(`Failed to insert notification: ${error?.message ?? "Unknown error"}`);
     }
 
-    mirrorNotificationToMongoSafely({
+    const mirrorInput = {
       notificationId: String(data.id),
       notification: data as Record<string, unknown>,
       createdAt: String(data.created_at ?? new Date().toISOString()),
-    });
+    };
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while WORKFLOW_DATA_MONGO_WRITE_MODE=dual");
+      }
+      await mirrorNotificationToMongo(mirrorInput);
+    } else {
+      mirrorNotificationToMongoSafely(mirrorInput);
+    }
   }
 
   private async sendSmsSafely(label: string, action: () => Promise<unknown>) {
@@ -2076,11 +2120,23 @@ export class CertificatesService {
       throw new Error(`Failed to update certificate: ${error?.message ?? "Unknown error"}`);
     }
 
-    mirrorWorkflowRecordsToMongoSafely({
-      table: "certificates",
-      records: [data as unknown as Record<string, unknown>],
-    });
+    await this.mirrorCertificateWrite(data as unknown as Record<string, unknown>);
 
     return data;
+  }
+
+  private async mirrorCertificateWrite(record: Record<string, unknown>) {
+    const input = { table: "certificates" as const, records: [record] };
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while WORKFLOW_DATA_MONGO_WRITE_MODE=dual");
+      }
+      const mirrored = await mirrorWorkflowRecordsToMongo(input);
+      if (mirrored !== 1) {
+        throw new Error("Certificate was saved in Supabase but could not be mirrored to MongoDB");
+      }
+      return;
+    }
+    mirrorWorkflowRecordsToMongoSafely(input);
   }
 }

@@ -15,7 +15,10 @@ import {
 import type { NotificationReadFilter } from "../repositories/notifications.mongo.js";
 import {
   getNotificationPreferencesFromMongo,
+  mirrorNotificationPreferencesToMongo,
   mirrorNotificationPreferencesToMongoSafely,
+  upsertNotificationPreferencesInMongo,
+  type MongoNotificationPreferences,
 } from "../repositories/notification-preferences.mongo.js";
 import {
   listNotificationAuditRecordsFromMongo,
@@ -192,7 +195,11 @@ export class NotificationsService {
   }
 
   async getNotificationPreferences(actor: AuthenticatedUser) {
-    if (env.NOTIFICATION_PREFERENCES_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo";
+    const preferMongo = requiresMongo
+      || env.NOTIFICATION_PREFERENCES_MONGO_READ_MODE === "mongo"
+      || env.NOTIFICATION_PREFERENCES_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         const preferences = await getNotificationPreferencesFromMongo(actor.id);
         if (preferences) return preferences as NotificationPreferencesRecord;
@@ -202,6 +209,10 @@ export class NotificationsService {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    if (requiresMongo) {
+      throw new Error("MongoDB is required when NOTIFICATION_PREFERENCES_DATA_SOURCE=mongo");
     }
 
     const { data, error } = await adminSupabase
@@ -220,6 +231,19 @@ export class NotificationsService {
   async updateNotificationPreferences(actor: AuthenticatedUser, payload: unknown) {
     const updates = notificationPreferencesSchema.parse(payload);
     const existing = await this.getNotificationPreferences(actor);
+
+    if (env.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required when NOTIFICATION_PREFERENCES_DATA_SOURCE=mongo");
+      }
+
+      return upsertNotificationPreferencesInMongo(
+        actor.id,
+        updates,
+        existing as MongoNotificationPreferences | null,
+      );
+    }
+
     const { data, error } = await adminSupabase
       .from("notification_preferences")
       .upsert(
@@ -242,13 +266,23 @@ export class NotificationsService {
     }
 
     const preferences = data as NotificationPreferencesRecord;
-    mirrorNotificationPreferencesToMongoSafely(preferences);
+    if (env.NOTIFICATION_PREFERENCES_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while NOTIFICATION_PREFERENCES_WRITE_MODE=dual");
+      }
+      await mirrorNotificationPreferencesToMongo([preferences]);
+    } else {
+      mirrorNotificationPreferencesToMongoSafely(preferences);
+    }
     return preferences;
   }
 
   async getDashboardNotifications(actor: AuthenticatedUser, limit: number) {
     const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo";
-    if ((requiresMongo || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo") && isMongoConfigured()) {
+    const preferMongo = requiresMongo
+      || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo"
+      || env.NOTIFICATIONS_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         return await listDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor), limit);
       } catch (error) {
@@ -276,7 +310,10 @@ export class NotificationsService {
 
   async getUnreadDashboardNotificationCount(actor: AuthenticatedUser) {
     const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo";
-    if ((requiresMongo || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo") && isMongoConfigured()) {
+    const preferMongo = requiresMongo
+      || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo"
+      || env.NOTIFICATIONS_WRITE_MODE === "dual";
+    if (preferMongo && isMongoConfigured()) {
       try {
         return await countUnreadDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor));
       } catch (error) {
@@ -329,7 +366,12 @@ export class NotificationsService {
       throw new Error(`Failed to mark notification as read: ${updateError.message}`);
     }
 
-    markNotificationReadInMongoSafely(notificationId, readAt);
+    if (env.NOTIFICATIONS_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) throw new Error("MongoDB is required while NOTIFICATIONS_WRITE_MODE=dual");
+      await markNotificationReadInMongo(notificationId, readAt);
+    } else {
+      markNotificationReadInMongoSafely(notificationId, readAt);
+    }
   }
 
   async markAllDashboardNotificationsRead(actor: AuthenticatedUser) {
@@ -349,7 +391,12 @@ export class NotificationsService {
       throw new Error(`Failed to mark notifications as read: ${error.message}`);
     }
 
-    markNotificationsReadInMongoSafely(this.getMongoNotificationReadFilter(actor), readAt);
+    if (env.NOTIFICATIONS_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) throw new Error("MongoDB is required while NOTIFICATIONS_WRITE_MODE=dual");
+      await markNotificationsReadInMongo(this.getMongoNotificationReadFilter(actor), readAt);
+    } else {
+      markNotificationsReadInMongoSafely(this.getMongoNotificationReadFilter(actor), readAt);
+    }
   }
 
   async getAuditRecords(table: NotificationAuditTable, orderColumn: string, page: number, pageSize: number) {

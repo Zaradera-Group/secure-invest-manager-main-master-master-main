@@ -16,6 +16,8 @@
     "audit:workflow-data:mongo": "tsx scripts/audit-workflow-data-mongo.ts",
     "backfill:staff-directory:mongo": "tsx scripts/backfill-staff-directory-mongo.ts",
     "audit:staff-directory:mongo": "tsx scripts/audit-staff-directory-mongo.ts",
+    "backfill:staff-contacts:mongo": "tsx scripts/backfill-staff-contacts-mongo.ts",
+    "audit:staff-contacts:mongo": "tsx scripts/audit-staff-contacts-mongo.ts",
     "backfill:notification-preferences:mongo": "tsx scripts/backfill-notification-preferences-mongo.ts",
     "audit:notification-preferences:mongo": "tsx scripts/audit-notification-preferences-mongo.ts",
     "backfill:security-audit:mongo": "tsx scripts/backfill-security-audit-mongo.ts",
@@ -28,6 +30,8 @@
     "audit:notification-delivery-readiness:mongo": "tsx scripts/audit-notification-delivery-readiness-mongo.ts",
     "audit:notification-delivery-outbox:mongo": "tsx scripts/audit-notification-delivery-outbox-mongo.ts",
     "audit:storage:supabase": "tsx scripts/audit-supabase-storage.ts",
+    "audit:storage:s3": "tsx scripts/audit-storage-s3.ts",
+    "audit:cutover:readiness": "tsx scripts/audit-cutover-readiness.ts",
     "transfer:storage:s3": "tsx scripts/transfer-supabase-storage-to-s3.ts"
   },
   "dependencies": {

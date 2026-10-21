@@ -120,7 +120,11 @@ const envSchema = z.object({
   NOTIFICATIONS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   // Mongo-primary notification state is limited to dashboard reads and read acknowledgements.
   NOTIFICATIONS_DATA_SOURCE: z.enum(["supabase", "mongo"]).default("supabase"),
+  NOTIFICATIONS_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
   NOTIFICATION_PREFERENCES_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
+  // Keep Supabase authoritative until every reminder producer reads MongoDB preferences.
+  NOTIFICATION_PREFERENCES_DATA_SOURCE: z.enum(["supabase", "mongo"]).default("supabase"),
+  NOTIFICATION_PREFERENCES_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
   NOTIFICATION_AUDIT_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   NOTIFICATION_AUDIT_MONGO_RECONCILIATION_ENABLED: z
     .union([z.string(), z.boolean()])
@@ -144,6 +148,26 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === true || value === "true"),
   MONGO_MATURITY_REMINDER_SHADOW_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  // Shadow producer writes only non-claimable outbox records for comparison with Supabase jobs.
+  MONGO_MATURITY_REMINDER_OUTBOX_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  MONGO_MATURITY_REMINDER_PRODUCER_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  // Render is not authoritative until the shadow outbox, recipient mappings, and dashboard notifications are accepted.
+  MATURITY_REMINDER_DELIVERY_AUTHORITY: z.enum(["legacy", "render"]).default("legacy"),
+  MONGO_PAYMENT_REMINDER_OUTBOX_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  MONGO_PAYMENT_REMINDER_PRODUCER_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  PAYMENT_REMINDER_DELIVERY_AUTHORITY: z.enum(["legacy", "render"]).default("legacy"),
+  MONGO_MONTHLY_REPORT_OUTBOX_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  MONGO_MONTHLY_REPORT_PRODUCER_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  MONTHLY_REPORT_DELIVERY_AUTHORITY: z.enum(["legacy", "render"]).default("legacy"),
   // This remains false until a Mongo-native notification producer and delivery worker are approved together.
   NOTIFICATION_RENDER_WORKER_ENABLED: z
     .union([z.string(), z.boolean()])
@@ -155,6 +179,7 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
+  SECURITY_AUDIT_MONGO_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
   AUDIT_LOGS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   AUDIT_LOGS_MONGO_RECONCILIATION_ENABLED: z
     .union([z.string(), z.boolean()])
@@ -166,6 +191,8 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
+  // Supabase remains authoritative in supabase mode. Dual mode makes Mongo mirroring synchronous and failure-visible.
+  WORKFLOW_DATA_MONGO_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
   WORKFLOW_DATA_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   CERTIFICATES_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   ANNOUNCEMENTS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),

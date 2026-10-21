@@ -1,5 +1,7 @@
 import { adminSupabase } from "./supabase.js";
+import { env } from "../config/env.js";
 import {
+  mirrorSecurityAuditRecordsToMongo,
   mirrorSecurityAuditRecordToMongoSafely,
   type SecurityAuditRecord,
 } from "../repositories/security-audit.mongo.js";
@@ -41,5 +43,10 @@ export const insertAuditLog = async (input: {
     throw new Error(`Failed to insert audit log: ${error?.message ?? "no record was returned"}`);
   }
 
-  mirrorSecurityAuditRecordToMongoSafely(data as SecurityAuditRecord);
+  const record = data as SecurityAuditRecord;
+  if (env.SECURITY_AUDIT_MONGO_WRITE_MODE === "dual") {
+    await mirrorSecurityAuditRecordsToMongo([record]);
+  } else {
+    mirrorSecurityAuditRecordToMongoSafely(record);
+  }
 };

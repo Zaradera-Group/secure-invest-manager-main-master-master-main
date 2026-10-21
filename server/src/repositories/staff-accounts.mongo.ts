@@ -40,6 +40,10 @@ export async function getStaffAccountByAuth0Subject(auth0Subject: string) {
   return (await getCollection()).findOne({ auth0Subject });
 }
 
+export async function getStaffAccountByLegacyUserId(legacyUserId: string) {
+  return (await getCollection()).findOne({ legacyUserId });
+}
+
 export async function listStaffAccounts() {
   return (await getCollection()).find({}).toArray();
 }
