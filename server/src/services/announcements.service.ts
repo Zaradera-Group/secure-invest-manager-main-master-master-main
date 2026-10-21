@@ -1,9 +1,12 @@
 import { env } from "../config/env.js";
+import { randomUUID } from "node:crypto";
 import { isMongoConfigured } from "../lib/mongodb.js";
 import { adminSupabase } from "../lib/supabase.js";
 import {
+  deleteWorkflowRecordsFromMongo,
   deleteWorkflowRecordsFromMongoSafely,
   listWorkflowRecordsFromMongo,
+  mirrorWorkflowRecordsToMongo,
   mirrorWorkflowRecordsToMongoSafely,
 } from "../repositories/workflow-data.mongo.js";
 
@@ -48,7 +51,8 @@ const parseAnnouncement = (input: unknown) => {
 
 export class AnnouncementsService {
   async list(page: number, pageSize: number) {
-    if (env.ANNOUNCEMENTS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.ANNOUNCEMENTS_DATA_SOURCE === "mongo";
+    if ((requiresMongo || env.ANNOUNCEMENTS_MONGO_READ_MODE === "mongo") && isMongoConfigured()) {
       try {
         const announcements = await listWorkflowRecordsFromMongo("announcements") as unknown as AnnouncementRecord[];
         const from = page * pageSize;
@@ -61,6 +65,10 @@ export class AnnouncementsService {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    if (requiresMongo) {
+      throw new Error("MongoDB is required when ANNOUNCEMENTS_DATA_SOURCE=mongo");
     }
 
     const from = page * pageSize;
@@ -80,6 +88,21 @@ export class AnnouncementsService {
 
   async create(input: unknown) {
     const announcement = parseAnnouncement(input);
+
+    if (env.ANNOUNCEMENTS_DATA_SOURCE === "mongo") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required when ANNOUNCEMENTS_DATA_SOURCE=mongo");
+      }
+
+      const record: AnnouncementRecord = {
+        id: randomUUID(),
+        ...announcement,
+        created_at: new Date().toISOString(),
+      };
+      await mirrorWorkflowRecordsToMongo({ table: "announcements", records: [record] });
+      return record;
+    }
+
     const { data, error } = await adminSupabase
       .from("announcements")
       .insert(announcement)
@@ -102,6 +125,15 @@ export class AnnouncementsService {
   async remove(id: string) {
     if (!id.trim()) {
       throw new AnnouncementValidationError("Announcement ID is required");
+    }
+
+    if (env.ANNOUNCEMENTS_DATA_SOURCE === "mongo") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required when ANNOUNCEMENTS_DATA_SOURCE=mongo");
+      }
+
+      await deleteWorkflowRecordsFromMongo({ table: "announcements", supabaseIds: [id] });
+      return;
     }
 
     const { error } = await adminSupabase.from("announcements").delete().eq("id", id);

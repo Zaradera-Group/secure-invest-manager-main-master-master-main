@@ -95,6 +95,25 @@ export async function mirrorWorkflowRecordsToMongo({ table, records }: WorkflowM
   return validRecords.length;
 }
 
+export async function deleteWorkflowRecordsFromMongo({ table, supabaseIds }: WorkflowDeleteInput) {
+  if (!isMongoConfigured()) {
+    throw new Error("MongoDB is not configured. Set MONGODB_URI and MONGODB_DB_NAME before deleting workflow data.");
+  }
+
+  const ids = [...new Set(supabaseIds.filter(Boolean))];
+  if (!ids.length) {
+    return 0;
+  }
+
+  if (!indexesReady.has(table)) {
+    indexesReady.set(table, ensureIndexes(table));
+  }
+  await indexesReady.get(table);
+
+  const result = await (await getMongoDb()).collection(table).deleteMany({ supabaseId: { $in: ids } });
+  return result.deletedCount;
+}
+
 export function mirrorWorkflowRecordsToMongoSafely(input: WorkflowMirrorInput) {
   if (!env.WORKFLOW_DATA_MONGO_MIRROR_ENABLED) {
     return;
