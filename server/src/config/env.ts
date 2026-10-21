@@ -105,6 +105,12 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   NOTIFICATION_AUDIT_MONGO_RECONCILIATION_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  // Shadow mode is read-only. The legacy Supabase Edge worker remains the only delivery worker.
+  NOTIFICATION_WORKER_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  NOTIFICATION_WORKER_SHADOW_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   SECURITY_AUDIT_MONGO_MIRROR_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()

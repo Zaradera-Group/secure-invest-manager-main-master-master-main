@@ -134,6 +134,11 @@ app.get("/health/migration", async (request, response) => {
       notificationsRead: env.NOTIFICATIONS_MONGO_READ_MODE,
       notificationPreferencesRead: env.NOTIFICATION_PREFERENCES_MONGO_READ_MODE,
     },
+    notificationWorker: {
+      shadowEnabled: env.NOTIFICATION_WORKER_SHADOW_ENABLED,
+      shadowCron: env.NOTIFICATION_WORKER_SHADOW_CRON || "*/5 * * * *",
+      deliveryAuthority: "supabase-edge",
+    },
     storage: { provider: env.STORAGE_PROVIDER },
   });
 });
