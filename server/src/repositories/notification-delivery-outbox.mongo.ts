@@ -140,7 +140,7 @@ export async function requeueStaleNotificationDeliveries(now = new Date(), stale
   const nowIso = now.toISOString();
   const staleBefore = new Date(now.getTime() - staleAfterMinutes * 60 * 1000).toISOString();
   const result = await collection.updateMany(
-    { status: "processing", lockedAt: { $ne: null, $lte: staleBefore } },
+    { deliveryMode: "live", status: "processing", lockedAt: { $ne: null, $lte: staleBefore } },
     { $set: { status: "pending", lockedAt: null, scheduledAt: nowIso, updatedAt: nowIso } },
   );
   return result.modifiedCount;

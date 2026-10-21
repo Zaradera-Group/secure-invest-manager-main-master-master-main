@@ -161,7 +161,7 @@ async function enqueueBirthdaySmsToOutbox(investors: BirthdayInvestor[], now: Da
       dateOfBirth: investor.date_of_birth,
       eventDate: dateKey,
     },
-    dedupeKey: `birthday_greeting:sms:${investor.id}:${dateKey}`,
+    dedupeKey: `birthday_greeting:${deliveryMode}:sms:${investor.id}:${dateKey}`,
   })));
 
   return results.reduce((summary, result) => {

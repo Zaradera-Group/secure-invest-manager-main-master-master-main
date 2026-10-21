@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { env } from "../config/env.js";
-import { sendBirthdayEmail } from "../lib/email.js";
+import { canSendEmail, sendBirthdayEmail, sendPlainEmail } from "../lib/email.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
 import { sendPlainSms } from "../lib/sms.js";
 import {
@@ -12,13 +12,18 @@ import {
 } from "../repositories/notification-delivery-outbox.mongo.js";
 
 const defaultSchedule = "*/5 * * * *";
-const supportedNotificationTypes = ["birthday_greeting"] as const;
 let workerRunning = false;
 
 const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
+const getWorkerNotificationTypes = () => [
+  ...(env.BIRTHDAY_DELIVERY_AUTHORITY === "render" ? ["birthday_greeting"] : []),
+  ...(env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY === "render" ? ["certificate_stage_notification"] : []),
+];
+
 async function processBirthdayGreeting(job: NotificationDeliveryOutboxRecord) {
   if (job.channel !== "sms") throw new Error(`Unsupported birthday delivery channel: ${job.channel}`);
+  if (env.SMS_ENABLED !== true) throw new Error("Birthday SMS delivery is disabled");
   const name = text(job.payload.investorName);
   if (!name) throw new Error("Birthday delivery is missing investorName");
 
@@ -37,8 +42,47 @@ async function processBirthdayGreeting(job: NotificationDeliveryOutboxRecord) {
   }
 }
 
+async function processCertificateStageNotification(job: NotificationDeliveryOutboxRecord) {
+  const investorName = text(job.payload.investorName);
+  const stage = text(job.payload.stage);
+  if (!investorName) throw new Error("Certificate stage delivery is missing investorName");
+
+  const contentByStage: Record<string, { subject: string; email: string; sms: string }> = {
+    pending_manager: {
+      subject: "Certificate awaiting manager review",
+      email: `<p>A certificate for <strong>${investorName}</strong> is ready for manager review.</p><p>Status: pending_manager</p>`,
+      sms: `Certificate for ${investorName} is awaiting Investment Manager review.`,
+    },
+    pending_general_manager: {
+      subject: "Certificate awaiting general manager review",
+      email: `<p>A certificate for <strong>${investorName}</strong> is ready for general manager review.</p><p>Status: pending_general_manager</p>`,
+      sms: `Certificate for ${investorName} is awaiting General Manager review.`,
+    },
+    pending_ceo: {
+      subject: "Certificate awaiting CEO approval",
+      email: `<p>A certificate for <strong>${investorName}</strong> is ready for CEO approval.</p><p>Status: pending_ceo</p>`,
+      sms: `Certificate for ${investorName} is awaiting CEO approval.`,
+    },
+  };
+  const content = contentByStage[stage];
+  if (!content) throw new Error(`Unsupported certificate notification stage: ${stage || "missing"}`);
+
+  if (job.channel === "email") {
+    if (!canSendEmail()) throw new Error("Certificate email delivery is disabled or not configured");
+    await sendPlainEmail(job.recipient, content.subject, content.email);
+    return "email";
+  }
+  if (job.channel === "sms") {
+    if (env.SMS_ENABLED !== true) throw new Error("Certificate SMS delivery is disabled");
+    await sendPlainSms(job.recipient, content.sms);
+    return "sms";
+  }
+  throw new Error(`Unsupported certificate delivery channel: ${job.channel}`);
+}
+
 async function processDelivery(job: NotificationDeliveryOutboxRecord) {
   if (job.notificationType === "birthday_greeting") return processBirthdayGreeting(job);
+  if (job.notificationType === "certificate_stage_notification") return processCertificateStageNotification(job);
   throw new Error(`Unsupported Render notification type: ${job.notificationType}`);
 }
 
@@ -51,12 +95,14 @@ export async function runNotificationRenderWorker() {
   workerRunning = true;
   try {
     const requeued = await requeueStaleNotificationDeliveries();
+    const notificationTypes = getWorkerNotificationTypes();
+    if (notificationTypes.length === 0) return;
     let completed = 0;
     let failed = 0;
     let emailFallback = 0;
 
     for (let index = 0; index < env.NOTIFICATION_RENDER_WORKER_BATCH_SIZE; index += 1) {
-      const job = await claimNextNotificationDelivery(supportedNotificationTypes);
+      const job = await claimNextNotificationDelivery(notificationTypes);
       if (!job) break;
 
       try {
@@ -73,7 +119,7 @@ export async function runNotificationRenderWorker() {
     }
 
     if (requeued > 0 || completed > 0 || failed > 0) {
-      console.log(`[notification-render-worker] birthday deliveries: completed=${completed} failed=${failed} email_fallback=${emailFallback} stale_requeued=${requeued}`);
+      console.log(`[notification-render-worker] deliveries: completed=${completed} failed=${failed} email_fallback=${emailFallback} stale_requeued=${requeued}`);
     }
   } catch (error) {
     console.error("[notification-render-worker] Run failed", error);
@@ -91,18 +137,13 @@ export function startNotificationRenderWorkerJob() {
     console.log("[notification-render-worker] Inactive because MongoDB is not configured");
     return null;
   }
-  if (env.SMS_ENABLED !== true) {
-    console.log("[notification-render-worker] Inactive because SMS delivery is disabled");
-    return null;
-  }
-
   const schedule = env.NOTIFICATION_RENDER_WORKER_CRON || defaultSchedule;
   if (!cron.validate(schedule)) throw new Error(`Invalid Render notification worker cron expression: ${schedule}`);
 
   const job = cron.schedule(schedule, () => {
     void runNotificationRenderWorker();
   }, { timezone: "Africa/Lagos" });
-  console.log(`[notification-render-worker] Scheduled with cron "${schedule}" (Africa/Lagos); supports birthday_greeting only`);
+  console.log(`[notification-render-worker] Scheduled with cron "${schedule}" (Africa/Lagos); active authorities: birthday=${env.BIRTHDAY_DELIVERY_AUTHORITY}, certificate=${env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY}`);
   void runNotificationRenderWorker();
   return job;
 }

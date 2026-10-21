@@ -94,6 +94,7 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => value === true || value === "true"),
+  CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY: z.enum(["legacy", "render"]).default("legacy"),
   BIRTHDAY_SMS_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   BIRTHDAY_SMS_TIMEZONE: z.string().optional().transform((value) => value?.trim() || undefined),
   PUBLIC_INTAKE_ASSIGNEE_USER_ID: z.string().optional().transform((value) => value?.trim() || undefined),

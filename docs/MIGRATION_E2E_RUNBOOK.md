@@ -176,6 +176,18 @@ CERTIFICATE_NOTIFICATION_OUTBOX_SHADOW_ENABLED=true
 
 After deployment, advance one test certificate through each approval stage. Dashboard, email, and SMS behavior remains unchanged; MongoDB receives only `shadow` records for the intended channels. Do not enable Render delivery for `certificate_stage_notification` until its recipients and rendered content have been audited.
 
+### Certificate Notification Delivery Cutover
+
+After the certificate-stage shadow records have been accepted, switch only this outbound workflow in Render:
+
+```text
+CERTIFICATE_NOTIFICATION_OUTBOX_SHADOW_ENABLED=false
+CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY=render
+NOTIFICATION_RENDER_WORKER_ENABLED=true
+```
+
+The certificate workflow continues to create dashboard notifications in its current path. Email and SMS are instead placed in `live` MongoDB outbox records and delivered by Render. The worker handles only `pending_manager`, `pending_general_manager`, and `pending_ceo` certificate-stage messages. Roll back by setting `CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY=legacy` and redeploying.
+
 ## 7. Existing Staff Workflow Test
 
 For one approved staff account, use the current Supabase login and verify:
