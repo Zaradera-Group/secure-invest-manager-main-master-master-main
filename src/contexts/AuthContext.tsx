@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode, useMemo
 import { type Session, type User, type AuthError, type AuthChangeEvent } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
-type AppRole =
+export type AppRole =
   | 'super_admin'
   | 'admin'
   | 'staff'
@@ -11,7 +11,21 @@ type AppRole =
   | 'general_manager'
   | 'software_engineer';
 
-type RequestedRole = 'ceo' | 'general_manager' | 'investment_manager' | 'accountant' | 'it_manager';
+export type RequestedRole = 'ceo' | 'general_manager' | 'investment_manager' | 'accountant' | 'it_manager';
+export type AppAuthUser = {
+  id: string;
+  email?: string;
+  user_metadata: {
+    full_name?: string;
+    phone?: string;
+  };
+  created_at?: string;
+  last_sign_in_at?: string;
+};
+export type AppAuthSession = {
+  access_token: string;
+  user: AppAuthUser;
+};
 type AllowedAuthUser = {
   email: string;
   role: AppRole | null;
@@ -23,9 +37,10 @@ type AuthProviderProps = Readonly<{
   children: ReactNode;
 }>;
 
-interface AuthContextType {
-  session: Session | null;
-  user: User | null;
+export interface AuthContextType {
+  provider: 'supabase' | 'auth0';
+  session: AppAuthSession | null;
+  user: AppAuthUser | null;
   role: AppRole | null;
   loading: boolean;
   signupEnabled: boolean;
@@ -34,7 +49,7 @@ interface AuthContextType {
   mfaRequired: boolean;
   mfaVerified: boolean;
   refreshMfaStatus: (force?: boolean) => Promise<void>;
-  ensureFreshSession: () => Promise<Session | null>;
+  ensureFreshSession: () => Promise<AppAuthSession | null>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (
     email: string,
@@ -45,7 +60,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000;
 const MFA_STATUS_REFRESH_INTERVAL_MS = 30 * 1000;
 const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
@@ -71,7 +86,7 @@ function isVisibilitySignOutBypassed() {
   return true;
 }
 
-function normalizeAppRole(role: string | null | undefined): AppRole | null {
+export function normalizeAppRole(role: string | null | undefined): AppRole | null {
   const normalizedRole = role?.trim().toLowerCase().replace(/[\s-]+/g, '_') ?? null;
 
   switch (normalizedRole) {
@@ -722,7 +737,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const mfaRequired = requiresMfaForRole(role);
 
   const value = useMemo(
-    () => ({ session, user, role, loading, signupEnabled, emailVerified, accessIssue, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession, signIn, signUp, signOut }),
+    () => ({ provider: 'supabase' as const, session, user, role, loading, signupEnabled, emailVerified, accessIssue, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession, signIn, signUp, signOut }),
     [session, user, role, loading, signupEnabled, emailVerified, accessIssue, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession, signIn, signUp, signOut]
   );
 

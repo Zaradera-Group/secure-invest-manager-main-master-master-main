@@ -1,8 +1,27 @@
 import { supabase } from '@/integrations/supabase/client';
 
-// Backend clients obtain their bearer token here so the temporary Supabase session
-// adapter can be replaced by Auth0 during the controlled login cutover.
+type AccessTokenProvider = () => Promise<string | null>;
+
+let accessTokenProvider: AccessTokenProvider | null = null;
+
+/**
+ * Registers the active browser identity provider. The current Supabase session is
+ * retained as a fallback until the live Auth0 cutover is enabled.
+ */
+export function setBackendAccessTokenProvider(provider: AccessTokenProvider | null) {
+  accessTokenProvider = provider;
+}
+
 export async function getBackendAccessToken(message = 'Your session has expired. Please sign in again.') {
+  if (accessTokenProvider) {
+    const token = await accessTokenProvider();
+    if (token) {
+      return token;
+    }
+
+    throw new Error(message);
+  }
+
   const { data, error } = await supabase.auth.getSession();
   if (error) {
     throw error;

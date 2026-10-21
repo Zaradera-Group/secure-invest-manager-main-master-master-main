@@ -3,17 +3,20 @@ import { Auth0Provider } from '@auth0/auth0-react';
 import App from "./App.tsx";
 import "./index.css";
 import { auth0TestConfig, isAuth0TestConfigured } from '@/lib/auth0Test';
+import { auth0LiveConfig, isAuth0LiveConfigured } from '@/lib/auth0Live';
 
 const app = <App />;
+const auth0Config = isAuth0LiveConfigured ? auth0LiveConfig : auth0TestConfig;
+const hasAuth0Provider = isAuth0LiveConfigured || isAuth0TestConfigured;
 
 createRoot(document.getElementById("root")!).render(
-  isAuth0TestConfigured ? (
+  hasAuth0Provider ? (
     <Auth0Provider
-      domain={auth0TestConfig.domain!}
-      clientId={auth0TestConfig.clientId!}
+      domain={auth0Config.domain!}
+      clientId={auth0Config.clientId!}
       authorizationParams={{
-        redirect_uri: auth0TestConfig.redirectUri,
-        ...(auth0TestConfig.audience ? { audience: auth0TestConfig.audience } : {}),
+        redirect_uri: auth0Config.redirectUri,
+        ...(auth0Config.audience ? { audience: auth0Config.audience } : {}),
       }}
     >
       {app}

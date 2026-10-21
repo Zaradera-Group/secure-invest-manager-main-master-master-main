@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
 export default function Profile() {
-  const { user, role, signOut, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession } = useAuth();
+  const { provider, user, role, signOut, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
@@ -24,6 +24,10 @@ export default function Profile() {
     let cancelled = false;
 
     const syncMfaStatus = async () => {
+      if (provider === 'auth0') {
+        return;
+      }
+
       try {
         const activeSession = await ensureFreshSession();
         if (!activeSession || cancelled) {
@@ -44,7 +48,7 @@ export default function Profile() {
     return () => {
       cancelled = true;
     };
-  }, [ensureFreshSession, refreshMfaStatus]);
+  }, [ensureFreshSession, provider, refreshMfaStatus]);
 
   const getInitials = () => {
     if (user?.user_metadata?.full_name) {
@@ -258,7 +262,7 @@ export default function Profile() {
 
           {mfaRequired && !mfaVerified && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-              Multi-factor authentication is required for your role before you can access protected dashboards and approval actions. Please enable MFA for this account in Supabase Authentication before continuing.
+              Multi-factor authentication is required for your role before you can access protected dashboards and approval actions.
             </div>
           )}
         </CardContent>
@@ -273,7 +277,9 @@ export default function Profile() {
             <div>
               <p className="text-sm font-medium">Authenticator App</p>
               <p className="text-sm text-muted-foreground">
-                {mfaVerified ? 'MFA is enabled for this account.' : 'Set up TOTP MFA using Google Authenticator, Authy, or Microsoft Authenticator.'}
+                {provider === 'auth0'
+                  ? 'MFA is managed by Auth0 during sign-in.'
+                  : mfaVerified ? 'MFA is enabled for this account.' : 'Set up TOTP MFA using Google Authenticator, Authy, or Microsoft Authenticator.'}
               </p>
             </div>
             <Badge variant={mfaVerified ? 'default' : 'secondary'}>
@@ -281,13 +287,13 @@ export default function Profile() {
             </Badge>
           </div>
 
-          {!mfaVerified && !qrCodeSvg && (
+          {provider === 'supabase' && !mfaVerified && !qrCodeSvg && (
             <Button onClick={() => void startMfaSetup()} disabled={mfaLoading}>
               {mfaLoading ? 'Preparing...' : 'Set Up MFA'}
             </Button>
           )}
 
-          {qrCodeSvg && (
+          {provider === 'supabase' && qrCodeSvg && (
             <div className="space-y-4">
               <div
                 className="w-fit rounded-lg border bg-white p-4"

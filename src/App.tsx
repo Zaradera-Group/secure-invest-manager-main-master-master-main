@@ -5,6 +5,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { Auth0LiveAuthProvider } from "@/contexts/Auth0LiveAuthProvider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
 import Splash from "./pages/Splash";
@@ -28,6 +29,7 @@ import SettlementDiscrepancies from "./pages/SettlementDiscrepancies";
 import Auth0Test from "./pages/Auth0Test";
 import { useAuth } from "@/contexts/AuthContext";
 import { getDefaultDashboardPath } from "@/lib/authRoutes";
+import { isAuth0LiveConfigured } from "@/lib/auth0Live";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -101,7 +103,7 @@ const RoleDashboardRedirect = () => {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <AuthProvider>
+    <ActiveAuthProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -109,8 +111,14 @@ const App = () => (
           <AnimatedRoutes />
         </BrowserRouter>
       </TooltipProvider>
-    </AuthProvider>
+    </ActiveAuthProvider>
   </QueryClientProvider>
 );
+
+function ActiveAuthProvider({ children }: Readonly<{ children: React.ReactNode }>) {
+  return isAuth0LiveConfigured
+    ? <Auth0LiveAuthProvider>{children}</Auth0LiveAuthProvider>
+    : <AuthProvider>{children}</AuthProvider>;
+}
 
 export default App;

@@ -180,7 +180,7 @@ export function useCertificatesList() {
 
 export function useManageInvestorCertificate() {
   const queryClient = useQueryClient();
-  const { user, role, mfaRequired, mfaVerified, ensureFreshSession, refreshMfaStatus } = useAuth();
+  const { provider, user, role, mfaRequired, mfaVerified, ensureFreshSession, refreshMfaStatus } = useAuth();
 
   return useMutation({
     mutationFn: async (payload: {
@@ -196,6 +196,7 @@ export function useManageInvestorCertificate() {
       }
 
       await ensureCertificateMfaReady({
+        provider,
         mfaRequired,
         mfaVerified,
         ensureFreshSession,
@@ -469,6 +470,7 @@ function getSuccessMessage(action: CertificateAction) {
 }
 
 async function ensureCertificateMfaReady(input: {
+  provider: 'supabase' | 'auth0';
   mfaRequired: boolean;
   mfaVerified: boolean;
   ensureFreshSession: () => Promise<unknown>;
@@ -476,6 +478,10 @@ async function ensureCertificateMfaReady(input: {
 }) {
   if (!input.mfaRequired || input.mfaVerified) {
     return;
+  }
+
+  if (input.provider === 'auth0') {
+    throw new Error('Complete the Auth0 multi-factor authentication challenge before you perform certificate actions.');
   }
 
   await input.ensureFreshSession();
