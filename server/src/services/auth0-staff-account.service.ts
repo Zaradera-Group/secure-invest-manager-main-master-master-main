@@ -1,5 +1,9 @@
 import { adminSupabase } from "../lib/supabase.js";
-import { getStaffAccountByEmail, upsertStaffAccount } from "../repositories/staff-accounts.mongo.js";
+import {
+  getStaffAccountByAuth0Subject,
+  getStaffAccountByEmail,
+  upsertStaffAccount,
+} from "../repositories/staff-accounts.mongo.js";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
 
 const supportedRoles = new Set<AppRole>([
@@ -17,7 +21,24 @@ const normalizeRole = (value: unknown): AppRole | null => {
   return supportedRoles.has(role as AppRole) ? role as AppRole : null;
 };
 
+export class Auth0StaffAccountMappingError extends Error {}
+
 export class Auth0StaffAccountService {
+  async assertMappedActiveAccount(actor: AuthenticatedUser) {
+    if (actor.provider !== "auth0") {
+      return;
+    }
+
+    const account = await getStaffAccountByAuth0Subject(actor.id);
+    if (!account || !account.isActive) {
+      throw new Auth0StaffAccountMappingError("Auth0 account is not linked to an active Zaradera staff record");
+    }
+
+    if (account.email !== actor.email || account.role !== actor.role) {
+      throw new Auth0StaffAccountMappingError("Auth0 identity does not match its Zaradera staff mapping");
+    }
+  }
+
   async provision(actor: AuthenticatedUser) {
     if (actor.provider !== "auth0") {
       throw new Error("Auth0 staff mapping requires an Auth0 access token");

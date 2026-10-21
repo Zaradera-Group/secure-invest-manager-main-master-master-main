@@ -33,6 +33,10 @@ export async function getStaffAccountByEmail(email: string) {
   return (await getCollection()).findOne({ email });
 }
 
+export async function getStaffAccountByAuth0Subject(auth0Subject: string) {
+  return (await getCollection()).findOne({ auth0Subject });
+}
+
 export async function upsertStaffAccount(account: Omit<StaffAccount, "provisionedAt" | "lastVerifiedAt">) {
   const collection = await getCollection();
   const now = new Date().toISOString();

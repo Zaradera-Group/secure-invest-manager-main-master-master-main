@@ -139,16 +139,6 @@ function Auth0TestSession() {
             <p className="text-xs leading-5 text-muted-foreground">
               A successful sign-in confirms authentication only. This test route cannot access live workflow data.
             </p>
-            <Button variant="outline" disabled={isCheckingRender} onClick={() => void validateRenderIdentity()}>
-              <ShieldCheck aria-hidden="true" />
-              {isCheckingRender ? 'Validating with Render...' : 'Validate Render identity'}
-            </Button>
-            {renderIdentity && (
-              <p className="border border-border bg-secondary/40 p-4 text-sm">
-                Render accepted this {renderIdentity.provider} identity as <strong>{renderIdentity.role}</strong>.
-              </p>
-            )}
-            {renderError && <p className="text-sm text-destructive">Render validation failed: {renderError}</p>}
             <Button variant="outline" disabled={isProvisioningMapping} onClick={() => void provisionStaffMapping()}>
               <Link2 aria-hidden="true" />
               {isProvisioningMapping ? 'Linking staff account...' : 'Link Auth0 account to staff record'}
@@ -159,6 +149,16 @@ function Auth0TestSession() {
               </p>
             )}
             {mappingError && <p className="text-sm text-destructive">Staff mapping failed: {mappingError}</p>}
+            <Button variant="outline" disabled={isCheckingRender} onClick={() => void validateRenderIdentity()}>
+              <ShieldCheck aria-hidden="true" />
+              {isCheckingRender ? 'Validating with Render...' : 'Validate Render identity'}
+            </Button>
+            {renderIdentity && (
+              <p className="border border-border bg-secondary/40 p-4 text-sm">
+                Render accepted this {renderIdentity.provider} identity as <strong>{renderIdentity.role}</strong>.
+              </p>
+            )}
+            {renderError && <p className="text-sm text-destructive">Render validation failed: {renderError}</p>}
             <Button variant="outline" onClick={() => void logout({ logoutParams: { returnTo: auth0TestConfig.redirectUri } })}>
               <LogOut aria-hidden="true" />
               Sign out of Auth0 test

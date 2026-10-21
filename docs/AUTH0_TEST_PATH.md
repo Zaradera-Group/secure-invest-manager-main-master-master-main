@@ -92,7 +92,7 @@ AUTH0_AUDIENCE=https://api.zaraderavest.com
 AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
 ```
 
-`AUTH_MODE=dual` preserves the existing Supabase authentication flow. Auth0 tokens are accepted only by the read-only `/auth/me` readiness endpoint. Leave `AUTH_MODE=auth0` unset; it is reserved for a later, planned cutover.
+`AUTH_MODE=dual` preserves the existing Supabase authentication flow. Auth0 tokens are accepted only by the read-only `/auth/me` readiness endpoint, after their MongoDB `staff_accounts` mapping has been verified. Leave `AUTH_MODE=auth0` unset; it is reserved for a later, planned cutover.
 
 ## 6. Acceptance test
 
@@ -102,6 +102,7 @@ AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
 4. Confirm Auth0 prompts for MFA.
 5. Confirm the page reports `Email verified: Yes`, the expected role, and `Staff access claim: Recognized`.
 6. Select **Link Auth0 account to staff record**. It succeeds only when the Auth0 email and single role match an active Zaradera allowlist record; this creates the MongoDB `staff_accounts` mapping.
-7. Confirm the user cannot access live investor or certificate data through this route.
+7. Select **Validate Render identity** and confirm that Render accepts the mapped Auth0 identity.
+8. Confirm the user cannot access live investor or certificate data through this route.
 
 Only after that test passes should we add Auth0 JWT validation to the Render API and implement a controlled parallel sign-in rollout.
