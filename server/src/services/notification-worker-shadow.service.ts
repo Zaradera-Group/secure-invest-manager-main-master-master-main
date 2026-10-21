@@ -1,4 +1,7 @@
 import { adminSupabase } from "../lib/supabase.js";
+import { getNotificationQueueSnapshotFromMongo, type NotificationQueueSnapshot } from "../repositories/notification-queue.mongo.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
+import { notificationDeliveryReadinessService, type NotificationDeliveryReadinessReport } from "./notification-delivery-readiness.service.js";
 
 const queueStatuses = ["pending", "processing", "completed", "failed", "cancelled"] as const;
 
@@ -9,6 +12,13 @@ export type NotificationWorkerQueueSnapshot = {
   statusCounts: Record<NotificationJobStatus, number>;
   duePending: number;
   staleProcessing: number;
+};
+
+export type NotificationWorkerShadowSnapshot = {
+  supabase: NotificationWorkerQueueSnapshot;
+  mongo: NotificationQueueSnapshot | null;
+  matchesMongo: boolean | null;
+  deliveryReadiness: NotificationDeliveryReadinessReport | null;
 };
 
 const countJobs = async (status: NotificationJobStatus, filters?: { dueBefore?: string; lockedBefore?: string }) => {
@@ -26,7 +36,7 @@ const countJobs = async (status: NotificationJobStatus, filters?: { dueBefore?: 
 };
 
 export class NotificationWorkerShadowService {
-  async inspectQueue(now = new Date()): Promise<NotificationWorkerQueueSnapshot> {
+  async inspectQueue(now = new Date()): Promise<NotificationWorkerShadowSnapshot> {
     const observedAt = now.toISOString();
     const staleBefore = new Date(now.getTime() - 15 * 60 * 1000).toISOString();
 
@@ -40,12 +50,24 @@ export class NotificationWorkerShadowService {
       countJobs("processing", { lockedBefore: staleBefore }),
     ]);
 
-    return {
+    const supabase = {
       observedAt,
       statusCounts: { pending, processing, completed, failed, cancelled },
       duePending,
       staleProcessing,
     };
+
+    if (!isMongoConfigured()) return { supabase, mongo: null, matchesMongo: null, deliveryReadiness: null };
+
+    const [mongo, deliveryReadiness] = await Promise.all([
+      getNotificationQueueSnapshotFromMongo(now),
+      notificationDeliveryReadinessService.inspectActiveQueue(),
+    ]);
+    const matchesMongo = mongo.duePending === supabase.duePending
+      && mongo.staleProcessing === supabase.staleProcessing
+      && queueStatuses.every((status) => mongo.statusCounts[status] === supabase.statusCounts[status]);
+
+    return { supabase, mongo, matchesMongo, deliveryReadiness };
   }
 }
 

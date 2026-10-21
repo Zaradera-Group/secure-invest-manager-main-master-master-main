@@ -5,6 +5,7 @@ import { adminSupabase } from "../lib/supabase.js";
 import { sendBirthdaySmsBatch } from "../lib/sms.js";
 import { sendBirthdayEmail } from "../lib/email.js";
 import { listWorkflowRecordsFromMongo } from "../repositories/workflow-data.mongo.js";
+import { enqueueNotificationDelivery } from "../repositories/notification-delivery-outbox.mongo.js";
 
 type BirthdayInvestor = {
   id: string;
@@ -93,6 +94,14 @@ export async function runBirthdaySmsJob(now = new Date()) {
       return;
     }
 
+    const outboxResult = await enqueueBirthdaySmsToOutbox(investors, now);
+    if (env.BIRTHDAY_DELIVERY_AUTHORITY === "render") {
+      if (!outboxResult) throw new Error("Render birthday authority requires a configured MongoDB outbox");
+      if (outboxResult.failed > 0) throw new Error(`Failed to enqueue ${outboxResult.failed} birthday delivery job(s)`);
+      console.log(`[birthday-sms-job] queued for Render delivery: total=${investors.length} inserted=${outboxResult.inserted} existing=${outboxResult.existing}`);
+      return;
+    }
+
     const smsResult = await sendBirthdaySmsBatch(
       investors.map((investor) => ({
         name: investor.name,
@@ -122,13 +131,49 @@ export async function runBirthdaySmsJob(now = new Date()) {
     }
 
     console.log(
-      `[birthday-sms-job] completed: total=${smsResult.total} sms_sent=${smsResult.sent} sms_failed=${smsResult.failed} email_fallback=${emailFallbackCount}`,
+      `[birthday-sms-job] completed: total=${smsResult.total} sms_sent=${smsResult.sent} sms_failed=${smsResult.failed} email_fallback=${emailFallbackCount}${outboxResult ? ` outbox_shadow_inserted=${outboxResult.inserted} outbox_shadow_existing=${outboxResult.existing} outbox_shadow_failed=${outboxResult.failed}` : ""}`,
     );
   } catch (error) {
     console.error("[birthday-sms-job] failed:", error);
   } finally {
     birthdayJobRunning = false;
   }
+}
+
+async function enqueueBirthdaySmsToOutbox(investors: BirthdayInvestor[], now: Date) {
+  const deliveryMode = env.BIRTHDAY_DELIVERY_AUTHORITY === "render" ? "live" : "shadow";
+  if (deliveryMode === "shadow" && !env.BIRTHDAY_OUTBOX_SHADOW_ENABLED) return null;
+  if (!isMongoConfigured()) {
+    console.warn("[birthday-sms-job] MongoDB birthday outbox is enabled but MongoDB is not configured");
+    return null;
+  }
+
+  const dateKey = now.toISOString().slice(0, 10);
+  const results = await Promise.allSettled(investors.map((investor) => enqueueNotificationDelivery({
+    notificationType: "birthday_greeting",
+    channel: "sms",
+    deliveryMode,
+    recipient: investor.phone,
+    payload: {
+      investorId: investor.id,
+      investorName: investor.name,
+      email: investor.email,
+      dateOfBirth: investor.date_of_birth,
+      eventDate: dateKey,
+    },
+    dedupeKey: `birthday_greeting:sms:${investor.id}:${dateKey}`,
+  })));
+
+  return results.reduce((summary, result) => {
+    if (result.status === "rejected") {
+      summary.failed += 1;
+    } else if (result.value.inserted) {
+      summary.inserted += 1;
+    } else {
+      summary.existing += 1;
+    }
+    return summary;
+  }, { inserted: 0, existing: 0, failed: 0 });
 }
 
 export function startBirthdaySmsJob() {

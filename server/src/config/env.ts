@@ -82,6 +82,18 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => (value === undefined ? undefined : value === true || value === "true")),
+  // Mirrors birthday SMS intent to the MongoDB outbox but does not change or send live delivery.
+  BIRTHDAY_OUTBOX_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  // The legacy direct sender remains the default until the Render birthday worker is accepted.
+  BIRTHDAY_DELIVERY_AUTHORITY: z.enum(["legacy", "render"]).default("legacy"),
+  // Mirrors certificate-stage delivery intent to MongoDB without changing its current sender.
+  CERTIFICATE_NOTIFICATION_OUTBOX_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
   BIRTHDAY_SMS_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   BIRTHDAY_SMS_TIMEZONE: z.string().optional().transform((value) => value?.trim() || undefined),
   PUBLIC_INTAKE_ASSIGNEE_USER_ID: z.string().optional().transform((value) => value?.trim() || undefined),
@@ -111,6 +123,18 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === true || value === "true"),
   NOTIFICATION_WORKER_SHADOW_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  NOTIFICATION_QUEUE_MONGO_RECONCILIATION_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => (value === undefined ? true : value === true || value === "true")),
+  NOTIFICATION_QUEUE_MONGO_RECONCILIATION_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  // This remains false until a Mongo-native notification producer and delivery worker are approved together.
+  NOTIFICATION_RENDER_WORKER_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  NOTIFICATION_RENDER_WORKER_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  NOTIFICATION_RENDER_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(20),
   SECURITY_AUDIT_MONGO_MIRROR_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()

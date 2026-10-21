@@ -23,6 +23,7 @@ import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
 import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import { enqueueNotificationDelivery } from "../repositories/notification-delivery-outbox.mongo.js";
 import {
   deleteWorkflowRecordsByFieldFromMongoSafely,
   deleteWorkflowRecordsFromMongoSafely,
@@ -1392,6 +1393,8 @@ export class CertificatesService {
           return;
         }
 
+        this.mirrorStageDeliveryIntentSafely(status, certificate, recipient, "email");
+
         if (status === "pending_manager") {
           await this.sendEmailSafely("manager notification", () =>
             sendManagerNotificationEmail(recipient.email!, certificate)
@@ -1409,6 +1412,7 @@ export class CertificatesService {
         }
 
         const recipientPhone = recipient.phone.trim();
+        this.mirrorStageDeliveryIntentSafely(status, certificate, recipient, "sms", recipientPhone);
 
         if (status === "pending_manager") {
           await this.sendSmsSafely("manager notification", () => sendManagerNotificationSms(recipientPhone, certificate));
@@ -1421,6 +1425,40 @@ export class CertificatesService {
         }
       }),
     );
+  }
+
+  private mirrorStageDeliveryIntentSafely(
+    status: Extract<CertificateStatus, "pending_manager" | "pending_general_manager" | "pending_ceo">,
+    certificate: CertificateRecord,
+    recipient: { id: string; email?: string; phone?: string },
+    channel: "email" | "sms",
+    recipientOverride?: string,
+  ) {
+    if (!env.CERTIFICATE_NOTIFICATION_OUTBOX_SHADOW_ENABLED || !isMongoConfigured()) return;
+
+    const destination = recipientOverride ?? recipient.email;
+    if (!destination) return;
+
+    void enqueueNotificationDelivery({
+      notificationType: "certificate_stage_notification",
+      channel,
+      deliveryMode: "shadow",
+      recipient: destination,
+      payload: {
+        certificateId: certificate.id,
+        investorName: certificate.investor_name,
+        stage: status,
+        recipientUserId: recipient.id,
+      },
+      dedupeKey: `certificate_stage_notification:${certificate.id}:${status}:${recipient.id}:${channel}`,
+    }).catch((error) => {
+      console.warn("[certificates.notifications] Failed to mirror delivery intent to MongoDB outbox", {
+        certificateId: certificate.id,
+        stage: status,
+        channel,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private buildNotificationMessage(status: CertificateStatus, certificate: CertificateRecord) {

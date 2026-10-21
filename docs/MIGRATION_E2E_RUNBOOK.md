@@ -46,6 +46,30 @@ Expected result:
 
 Do not continue if the response is `degraded`, MongoDB is unhealthy, or Auth0 is not configured in dual mode.
 
+### Storage Baseline
+
+Before any S3 cutover, run this read-only command from Render Shell:
+
+```bash
+npm run audit:storage:supabase
+```
+
+Record the reported object counts and bytes for the certificate and passport buckets. Do not set `STORAGE_PROVIDER=s3` until those historical objects have been copied to S3 and the counts have been verified.
+
+With the S3 variables configured in Render, first run the S3 transfer in dry-run mode:
+
+```bash
+npm run transfer:storage:s3
+```
+
+Then perform the copy only after reviewing the inventory:
+
+```bash
+STORAGE_TRANSFER_EXECUTE=true npm run transfer:storage:s3
+```
+
+The transfer preserves each object path beneath `S3_PREFIX`, skips existing same-size objects, refuses to overwrite a conflicting object, verifies size after upload, and never deletes a Supabase source object. Run `npm run audit:storage:supabase` again and compare it with the transfer summaries before switching `STORAGE_PROVIDER`.
+
 ## 3. MongoDB Reconciliation Checks
 
 Run these from Render Shell after the latest backend deployment. Do not run the commands from a local machine that cannot resolve the Atlas SRV hostname.
@@ -59,6 +83,9 @@ npm run backfill:notification-preferences:mongo
 npm run audit:notification-preferences:mongo
 npm run audit:notifications:mongo
 npm run audit:notification-audit:mongo
+npm run audit:notification-queue:mongo
+npm run audit:notification-delivery-readiness:mongo
+npm run audit:notification-delivery-outbox:mongo
 ```
 
 For announcements, only after its workflow-data audit passes, set:
@@ -101,6 +128,53 @@ NOTIFICATION_WORKER_SHADOW_CRON=*/5 * * * *
 ```
 
 Redeploy Render, then check the service logs for `[notification-worker.shadow]`. The log contains queue status counts, due pending jobs, and stale processing jobs. It must report only observation; it never claims a job or sends an email/SMS. Keep the existing Edge worker scheduled during this stage.
+
+Before treating the queue mirror as ready for later worker work, run from Render Shell:
+
+```bash
+npm run audit:notification-queue:mongo
+```
+
+It must report `passed: true`. Do not enable a MongoDB delivery worker based only on a successful mirror audit; the delivery implementation, retries, preference evaluation, and delivery audit write path must be migrated and tested together.
+
+The delivery-readiness audit must also report `passed: true`. It validates the active queue's supported notification types and required identifiers without sending a message or logging recipients.
+
+The MongoDB-native `notification_delivery_outbox` is intentionally separate and starts empty. It is protected by a unique delivery idempotency key, atomic claims, stale-lock recovery, and retry state, but it has no production producer or delivery worker yet. Keep `NOTIFICATION_RENDER_WORKER_ENABLED=false` until a narrowly-scoped producer and its end-to-end delivery tests have been approved.
+
+### Birthday Outbox Shadow Producer
+
+After the queue and delivery-readiness audits pass, the first production-safe producer can be enabled in Render:
+
+```text
+BIRTHDAY_OUTBOX_SHADOW_ENABLED=true
+```
+
+The existing birthday job continues to send through the established path. This setting only writes an idempotent `shadow` record into MongoDB for each birthday SMS intent. Shadow records are never eligible for delivery by the MongoDB worker. Confirm the birthday-job log reports `outbox_shadow_failed=0`, then inspect with `npm run audit:notification-delivery-outbox:mongo`.
+
+### Birthday Delivery Cutover
+
+Only after the shadow producer has been accepted and Twilio delivery is enabled, switch this single workflow in Render:
+
+```text
+BIRTHDAY_OUTBOX_SHADOW_ENABLED=false
+BIRTHDAY_DELIVERY_AUTHORITY=render
+NOTIFICATION_RENDER_WORKER_ENABLED=true
+NOTIFICATION_RENDER_WORKER_CRON=*/5 * * * *
+```
+
+Redeploy Render. The birthday scheduler then only creates `live` MongoDB outbox records; the Render worker claims and sends only `birthday_greeting` records in `live` mode. It does not process old `shadow` records or any reminder/certificate notification. The legacy direct birthday sender is skipped in this mode, preventing duplicate SMS delivery. Roll back by setting `BIRTHDAY_DELIVERY_AUTHORITY=legacy` and `NOTIFICATION_RENDER_WORKER_ENABLED=false`, then redeploy.
+
+The queue is reconciled to MongoDB independently every five minutes. When both jobs have run, the shadow log includes `matchesMongo: true`. Resolve any mismatch before a future delivery-worker cutover; delayed reconciliation may cause a temporary mismatch while the queues are changing.
+
+### Certificate Notification Outbox Shadow
+
+Keep certificate-stage delivery on its current sender while validating outbox records:
+
+```text
+CERTIFICATE_NOTIFICATION_OUTBOX_SHADOW_ENABLED=true
+```
+
+After deployment, advance one test certificate through each approval stage. Dashboard, email, and SMS behavior remains unchanged; MongoDB receives only `shadow` records for the intended channels. Do not enable Render delivery for `certificate_stage_notification` until its recipients and rendered content have been audited.
 
 ## 7. Existing Staff Workflow Test
 

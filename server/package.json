@@ -23,7 +23,12 @@
     "backfill:audit-logs:mongo": "tsx scripts/backfill-audit-logs-mongo.ts",
     "audit:audit-logs:mongo": "tsx scripts/audit-audit-logs-mongo.ts",
     "backfill:notification-audit:mongo": "tsx scripts/backfill-notification-audit-mongo.ts",
-    "audit:notification-audit:mongo": "tsx scripts/audit-notification-audit-mongo.ts"
+    "audit:notification-audit:mongo": "tsx scripts/audit-notification-audit-mongo.ts",
+    "audit:notification-queue:mongo": "tsx scripts/audit-notification-queue-mongo.ts",
+    "audit:notification-delivery-readiness:mongo": "tsx scripts/audit-notification-delivery-readiness-mongo.ts",
+    "audit:notification-delivery-outbox:mongo": "tsx scripts/audit-notification-delivery-outbox-mongo.ts",
+    "audit:storage:supabase": "tsx scripts/audit-supabase-storage.ts",
+    "transfer:storage:s3": "tsx scripts/transfer-supabase-storage-to-s3.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",

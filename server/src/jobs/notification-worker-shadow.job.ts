@@ -14,7 +14,7 @@ export async function runNotificationWorkerShadow() {
   shadowRunInProgress = true;
   try {
     const snapshot = await notificationWorkerShadowService.inspectQueue();
-    console.log("[notification-worker.shadow] Observed legacy Supabase notification queue; no jobs claimed or delivered", snapshot);
+    console.log("[notification-worker.shadow] Compared legacy Supabase queue to Mongo mirror; no jobs claimed or delivered", snapshot);
   } catch (error) {
     console.error("[notification-worker.shadow] Queue observation failed", error);
   } finally {
