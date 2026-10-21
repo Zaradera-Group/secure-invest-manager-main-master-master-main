@@ -94,6 +94,8 @@ AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
 
 `AUTH_MODE=dual` preserves the existing Supabase authentication flow. Auth0 tokens are accepted only by the read-only `/auth/me` readiness endpoint, after their MongoDB `staff_accounts` mapping has been verified. Leave `AUTH_MODE=auth0` unset; it is reserved for a later, planned cutover.
 
+`AUTH0_WORKFLOW_ACCESS_ENABLED=false` keeps every live workflow route Supabase-only. Set it to `true` only after the browser login has been moved to Auth0 and the end-to-end cutover test is scheduled. When enabled with `AUTH_MODE=dual`, mapped Auth0 staff identities and existing Supabase sessions can both access workflow routes; with `AUTH_MODE=auth0`, only mapped Auth0 identities can do so.
+
 ## 6. Acceptance test
 
 1. Create an Auth0 test user on the correct database connection and assign one staff role.

@@ -14,11 +14,11 @@ import {
   markDashboardNotificationRead,
   updateNotificationPreferences,
 } from "../controllers/notifications.controller.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireRole, requireWorkflowAuth } from "../middleware/auth.js";
 
 export const notificationsRouter = Router();
 
-notificationsRouter.use(requireAuth);
+notificationsRouter.use(requireWorkflowAuth);
 
 const staffRoles = ["investment_manager", "accountant", "general_manager", "admin", "super_admin"] as const;
 

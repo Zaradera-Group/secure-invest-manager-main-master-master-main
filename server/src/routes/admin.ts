@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { getCreatorDirectory, getRecentInvestorActivity, getRoleCounts } from "../controllers/admin.controller.js";
 import { createAnnouncement, deleteAnnouncement } from "../controllers/announcements.controller.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireRole, requireWorkflowAuth } from "../middleware/auth.js";
 
 export const adminRouter = Router();
 
-adminRouter.use(requireAuth, requireRole("admin", "super_admin"));
+adminRouter.use(requireWorkflowAuth, requireRole("admin", "super_admin"));
 adminRouter.get("/overview/creator-directory", getCreatorDirectory);
 adminRouter.get("/overview/role-counts", getRoleCounts);
 adminRouter.get("/overview/investor-activity", getRecentInvestorActivity);

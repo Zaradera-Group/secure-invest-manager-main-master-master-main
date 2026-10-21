@@ -11,11 +11,11 @@ import {
   refreshInvestorCertificate,
   updateInvestorAndRefreshCertificate,
 } from "../controllers/investors.controller.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireRole, requireWorkflowAuth } from "../middleware/auth.js";
 
 export const investorsRouter = Router();
 
-investorsRouter.use(requireAuth);
+investorsRouter.use(requireWorkflowAuth);
 
 investorsRouter.post(
   "/",

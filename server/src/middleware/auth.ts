@@ -136,6 +136,16 @@ export const requireMappedDualAuth = async (request: Request, response: Response
   }
 };
 
+// Workflow routes remain Supabase-only until the frontend cutover is intentionally enabled.
+// Once enabled, Auth0 tokens must pass both JWT validation and the canonical MongoDB staff mapping.
+export const requireWorkflowAuth = (request: Request, response: Response, next: NextFunction) => {
+  if (!env.AUTH0_WORKFLOW_ACCESS_ENABLED) {
+    return requireAuth(request, response, next);
+  }
+
+  return requireMappedDualAuth(request, response, next);
+};
+
 export const requireRole = (...roles: AppRole[]) => {
   return (request: Request, response: Response, next: NextFunction) => {
     if (!request.authUser) {

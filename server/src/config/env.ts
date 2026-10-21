@@ -23,6 +23,10 @@ const envSchema = z.object({
   AUTH0_AUDIENCE: z.string().optional().transform((value) => value?.trim() || undefined),
   AUTH0_ROLES_CLAIM: z.string().default("https://zaraderavest.com/roles"),
   AUTH0_EMAIL_CLAIM: z.string().default("https://zaraderavest.com/email"),
+  AUTH0_WORKFLOW_ACCESS_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
   AUTH0_STAFF_ACCOUNTS_MONGO_RECONCILIATION_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()

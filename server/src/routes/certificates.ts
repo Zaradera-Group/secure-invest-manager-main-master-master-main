@@ -13,11 +13,11 @@ import {
   managerApprove,
   sendCertificate,
 } from "../controllers/certificates.controller.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireRole, requireWorkflowAuth } from "../middleware/auth.js";
 
 export const certificatesRouter = Router();
 
-certificatesRouter.use(requireAuth);
+certificatesRouter.use(requireWorkflowAuth);
 
 certificatesRouter.get("/inbox", requireRole("investment_manager", "accountant", "general_manager", "super_admin", "admin"), getCertificateInbox);
 certificatesRouter.get("/pending-approval-count", requireRole("investment_manager", "accountant", "general_manager", "super_admin", "admin"), getPendingApprovalCount);
