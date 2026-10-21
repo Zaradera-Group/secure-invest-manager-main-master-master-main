@@ -5,8 +5,11 @@ import { z } from "zod";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
 import {
   countUnreadDashboardNotificationsFromMongo,
+  getDashboardNotificationFromMongo,
   listDashboardNotificationsFromMongo,
+  markNotificationReadInMongo,
   markNotificationReadInMongoSafely,
+  markNotificationsReadInMongo,
   markNotificationsReadInMongoSafely,
 } from "../repositories/notifications.mongo.js";
 import type { NotificationReadFilter } from "../repositories/notifications.mongo.js";
@@ -244,7 +247,8 @@ export class NotificationsService {
   }
 
   async getDashboardNotifications(actor: AuthenticatedUser, limit: number) {
-    if (env.NOTIFICATIONS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo";
+    if ((requiresMongo || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo") && isMongoConfigured()) {
       try {
         return await listDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor), limit);
       } catch (error) {
@@ -253,6 +257,8 @@ export class NotificationsService {
         });
       }
     }
+
+    if (requiresMongo) throw new Error("MongoDB is required when NOTIFICATIONS_DATA_SOURCE=mongo");
 
     const { data, error } = await adminSupabase
       .from("notifications")
@@ -269,7 +275,8 @@ export class NotificationsService {
   }
 
   async getUnreadDashboardNotificationCount(actor: AuthenticatedUser) {
-    if (env.NOTIFICATIONS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo";
+    if ((requiresMongo || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo") && isMongoConfigured()) {
       try {
         return await countUnreadDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor));
       } catch (error) {
@@ -278,6 +285,8 @@ export class NotificationsService {
         });
       }
     }
+
+    if (requiresMongo) throw new Error("MongoDB is required when NOTIFICATIONS_DATA_SOURCE=mongo");
 
     const { count, error } = await adminSupabase
       .from("notifications")
@@ -293,6 +302,13 @@ export class NotificationsService {
   }
 
   async markDashboardNotificationRead(actor: AuthenticatedUser, notificationId: string) {
+    if (env.NOTIFICATIONS_DATA_SOURCE === "mongo") {
+      const notification = await getDashboardNotificationFromMongo(notificationId) as DashboardNotificationRecord | null;
+      if (!notification || !isVisibleToActor(notification, actor)) throw new Error("Notification not found");
+      await markNotificationReadInMongo(notificationId, new Date().toISOString());
+      return;
+    }
+
     const { data, error } = await adminSupabase
       .from("notifications")
       .select("id, user_role, recipient_user_id, recipient_email")
@@ -318,6 +334,11 @@ export class NotificationsService {
 
   async markAllDashboardNotificationsRead(actor: AuthenticatedUser) {
     const readAt = new Date().toISOString();
+    if (env.NOTIFICATIONS_DATA_SOURCE === "mongo") {
+      await markNotificationsReadInMongo(this.getMongoNotificationReadFilter(actor), readAt);
+      return;
+    }
+
     const { error } = await adminSupabase
       .from("notifications")
       .update({ is_read: true, read_at: readAt })

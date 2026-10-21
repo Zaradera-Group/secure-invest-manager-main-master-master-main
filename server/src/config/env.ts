@@ -118,6 +118,8 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   NOTIFICATIONS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
+  // Mongo-primary notification state is limited to dashboard reads and read acknowledgements.
+  NOTIFICATIONS_DATA_SOURCE: z.enum(["supabase", "mongo"]).default("supabase"),
   NOTIFICATION_PREFERENCES_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   NOTIFICATION_AUDIT_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   NOTIFICATION_AUDIT_MONGO_RECONCILIATION_ENABLED: z

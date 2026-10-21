@@ -140,6 +140,36 @@ export function markNotificationReadInMongoSafely(notificationId: string, readAt
     });
 }
 
+export async function getDashboardNotificationFromMongo(notificationId: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const record = await (await getMongoDb()).collection<MirroredNotificationDocument>("notifications")
+    .findOne({ supabaseNotificationId: notificationId }, { projection: { rawSupabaseRecord: 1 } });
+  return record?.rawSupabaseRecord ?? null;
+}
+
+export async function markNotificationReadInMongo(notificationId: string, readAt: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const result = await (await getMongoDb()).collection("notifications").updateOne(
+    { supabaseNotificationId: notificationId },
+    {
+      $set: {
+        isRead: true,
+        readAt,
+        "rawSupabaseRecord.is_read": true,
+        "rawSupabaseRecord.read_at": readAt,
+        mirroredAt: new Date().toISOString(),
+      },
+    },
+  );
+  if (result.matchedCount !== 1) throw new Error("Notification not found");
+}
+
 export function markNotificationsReadInMongoSafely(filter: NotificationReadFilter, readAt: string) {
   if (!env.NOTIFICATIONS_MONGO_MIRROR_ENABLED || !isMongoConfigured()) return;
 
@@ -164,6 +194,26 @@ export function markNotificationsReadInMongoSafely(filter: NotificationReadFilte
         reason: error instanceof Error ? error.message : String(error),
       });
     });
+}
+
+export async function markNotificationsReadInMongo(filter: NotificationReadFilter, readAt: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const visibilityFilter = buildVisibilityFilter(filter);
+  await (await getMongoDb()).collection("notifications").updateMany(
+    { ...visibilityFilter, isRead: false },
+    {
+      $set: {
+        isRead: true,
+        readAt,
+        "rawSupabaseRecord.is_read": true,
+        "rawSupabaseRecord.read_at": readAt,
+        mirroredAt: new Date().toISOString(),
+      },
+    },
+  );
 }
 
 export async function listDashboardNotificationsFromMongo(filter: NotificationReadFilter, limit: number) {

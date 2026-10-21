@@ -99,6 +99,15 @@ ANNOUNCEMENTS_DATA_SOURCE=mongo
 
 Redeploy Render after changing these values, then create and delete one test announcement. Verify it appears only in MongoDB.
 
+For dashboard-notification state, only after the notification mirror audit passes, set:
+
+```text
+NOTIFICATIONS_MONGO_READ_MODE=mongo
+NOTIFICATIONS_DATA_SOURCE=mongo
+```
+
+Redeploy Render, confirm the dashboard list and unread count for one staff user, mark one notification read, then use "mark all read." Confirm the read state is updated in the MongoDB `notifications` collection. This switch does not yet move notification creation, reminder scheduling, or delivery jobs from Supabase.
+
 ## 4. Auth0 Readiness Test
 
 1. Open `/auth0-test` on the Netlify deployment.
