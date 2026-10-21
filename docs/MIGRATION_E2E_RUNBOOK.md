@@ -108,6 +108,17 @@ NOTIFICATIONS_DATA_SOURCE=mongo
 
 Redeploy Render, confirm the dashboard list and unread count for one staff user, mark one notification read, then use "mark all read." Confirm the read state is updated in the MongoDB `notifications` collection. This switch does not yet move notification creation, reminder scheduling, or delivery jobs from Supabase.
 
+### Mongo Maturity-Reminder Shadow
+
+Before replacing the Supabase reminder queue, enable the read-only maturity candidate observer:
+
+```text
+MONGO_MATURITY_REMINDER_SHADOW_ENABLED=true
+MONGO_MATURITY_REMINDER_SHADOW_CRON=15 7 * * *
+```
+
+Redeploy Render and review the `[mongo-maturity-reminder-shadow] Candidate report` log. It calculates only active, staff-created investors maturing today or in five days from MongoDB, using the same eligibility window as the legacy maturity reminder function. It creates no queue record and sends no email or SMS. Compare its aggregate counts with the legacy queue before building the live Mongo reminder producer.
+
 ## 4. Auth0 Readiness Test
 
 1. Open `/auth0-test` on the Netlify deployment.

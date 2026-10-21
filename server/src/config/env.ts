@@ -138,6 +138,12 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   NOTIFICATION_QUEUE_MONGO_RECONCILIATION_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
+  // Read-only maturity reminder candidate calculation from MongoDB. It never queues or sends a message.
+  MONGO_MATURITY_REMINDER_SHADOW_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  MONGO_MATURITY_REMINDER_SHADOW_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   // This remains false until a Mongo-native notification producer and delivery worker are approved together.
   NOTIFICATION_RENDER_WORKER_ENABLED: z
     .union([z.string(), z.boolean()])

@@ -8,6 +8,7 @@ import { startNotificationAuditReconciliationJob } from "./jobs/notification-aud
 import { startNotificationWorkerShadowJob } from "./jobs/notification-worker-shadow.job.js";
 import { startNotificationQueueReconciliationJob } from "./jobs/notification-queue-reconciliation.job.js";
 import { startNotificationRenderWorkerJob } from "./jobs/notification-render-worker.job.js";
+import { startMongoMaturityReminderShadowJob } from "./jobs/mongo-maturity-reminder-shadow.job.js";
 
 app.listen(env.PORT, () => {
   console.log(`Certificate workflow API listening on port ${env.PORT}`);
@@ -16,6 +17,7 @@ app.listen(env.PORT, () => {
   startAuth0StaffAccountReconciliationJob();
   startNotificationAuditReconciliationJob();
   startNotificationQueueReconciliationJob();
+  startMongoMaturityReminderShadowJob();
   startNotificationWorkerShadowJob();
   startNotificationRenderWorkerJob();
 });
