@@ -85,6 +85,59 @@ app.get("/health/mongodb", async (_request, response, next) => {
   }
 });
 
+app.get("/health/migration", async (request, response) => {
+  if (!env.MIGRATION_HEALTH_CHECK_ENABLED) {
+    response.status(404).json({ message: "Migration health check is disabled" });
+    return;
+  }
+
+  if (env.MIGRATION_HEALTH_CHECK_TOKEN) {
+    const suppliedToken = request.header("x-health-check-token") ?? request.query.token;
+    if (suppliedToken !== env.MIGRATION_HEALTH_CHECK_TOKEN) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+  }
+
+  let mongo: { configured: boolean; healthy: boolean } = {
+    configured: isMongoConfigured(),
+    healthy: false,
+  };
+
+  if (mongo.configured) {
+    try {
+      await checkMongoHealth();
+      mongo = { ...mongo, healthy: true };
+    } catch (error) {
+      console.error("[migration-health] MongoDB check failed", error);
+    }
+  }
+
+  const auth0Configured = Boolean(env.AUTH0_ISSUER_BASE_URL && env.AUTH0_AUDIENCE);
+  const ready = mongo.healthy && (env.AUTH_MODE === "supabase" || auth0Configured);
+
+  response.status(ready ? 200 : 503).json({
+    status: ready ? "ready" : "degraded",
+    mongo,
+    authentication: {
+      mode: env.AUTH_MODE,
+      auth0Configured,
+      workflowAccessEnabled: env.AUTH0_WORKFLOW_ACCESS_ENABLED,
+    },
+    persistence: {
+      publicIntakeOtp: env.PUBLIC_INTAKE_OTP_STORAGE_MODE,
+      publicIntakeRead: env.PUBLIC_INTAKE_MONGO_READ_MODE,
+      workflowRead: env.WORKFLOW_DATA_MONGO_READ_MODE,
+      certificatesRead: env.CERTIFICATES_MONGO_READ_MODE,
+      announcementsRead: env.ANNOUNCEMENTS_MONGO_READ_MODE,
+      announcementsSource: env.ANNOUNCEMENTS_DATA_SOURCE,
+      notificationsRead: env.NOTIFICATIONS_MONGO_READ_MODE,
+      notificationPreferencesRead: env.NOTIFICATION_PREFERENCES_MONGO_READ_MODE,
+    },
+    storage: { provider: env.STORAGE_PROVIDER },
+  });
+});
+
 app.get("/health/email", async (request, response, next) => {
   try {
     if (!env.EMAIL_HEALTH_CHECK_ENABLED) {

@@ -147,6 +147,11 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === true || value === "true"),
   EMAIL_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
+  MIGRATION_HEALTH_CHECK_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
+  MIGRATION_HEALTH_CHECK_TOKEN: z.string().optional().transform((value) => value?.trim() || undefined),
   CERTIFICATE_STORAGE_BUCKET: z.string().min(1).default("certificates"),
   INVESTOR_PASSPORT_STORAGE_BUCKET: z.string().min(1).default("investor-passports"),
   CERTIFICATE_TEMPLATE_PATH: z.string().optional().transform((value) => value?.trim() || undefined),
