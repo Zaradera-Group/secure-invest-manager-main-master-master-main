@@ -188,6 +188,16 @@ NOTIFICATION_RENDER_WORKER_ENABLED=true
 
 The certificate workflow continues to create dashboard notifications in its current path. Email and SMS are instead placed in `live` MongoDB outbox records and delivered by Render. The worker handles only `pending_manager`, `pending_general_manager`, and `pending_ceo` certificate-stage messages. Roll back by setting `CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY=legacy` and redeploying.
 
+### Public-Intake Receipt Email Shadow
+
+Enable the observation-only producer after the certificate delivery cutover is stable:
+
+```text
+PUBLIC_INTAKE_EMAIL_OUTBOX_SHADOW_ENABLED=true
+```
+
+Redeploy Render, submit one controlled public-intake form, and inspect `notification_delivery_outbox` for `public_intake_receipt` records in `shadow` mode. There should be one investor receipt and one record for each internal recipient. The direct email path remains authoritative and the Render worker cannot claim these shadow records. Do not enable a live public-intake email authority until the Mongo-backed receipt renderer and its controlled delivery test are complete.
+
 ## 7. Existing Staff Workflow Test
 
 For one approved staff account, use the current Supabase login and verify:
