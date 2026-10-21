@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -88,19 +89,29 @@ export async function createSignedObjectUrl(path: string, expiresInSeconds = env
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
-    return getSignedUrl(
-      s3Client,
-      new GetObjectCommand({
-        Bucket: getS3Bucket(),
-        Key: storagePath,
-      }),
-      { expiresIn: expiresInSeconds },
-    );
+    try {
+      await s3Client.send(new HeadObjectCommand({ Bucket: getS3Bucket(), Key: storagePath }));
+      return getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: getS3Bucket(),
+          Key: storagePath,
+        }),
+        { expiresIn: expiresInSeconds },
+      );
+    } catch (error) {
+      if (!shouldUseSupabaseReadFallback(error)) throw error;
+      return createSupabaseSignedObjectUrl(normalizeStoragePath(path), expiresInSeconds);
+    }
   }
 
+  return createSupabaseSignedObjectUrl(storagePath, expiresInSeconds);
+}
+
+async function createSupabaseSignedObjectUrl(path: string, expiresInSeconds: number) {
   const { data, error } = await adminSupabase.storage
     .from(env.CERTIFICATE_STORAGE_BUCKET)
-    .createSignedUrl(storagePath, expiresInSeconds);
+    .createSignedUrl(path, expiresInSeconds);
 
   if (error || !data?.signedUrl) {
     throw new Error(`Failed to create signed storage url: ${error?.message ?? "Unknown error"}`);
@@ -113,29 +124,46 @@ export async function downloadObject(path: string) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
-    const response = await s3Client.send(
-      new GetObjectCommand({
-        Bucket: getS3Bucket(),
-        Key: storagePath,
-      }),
-    );
+    try {
+      const response = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: getS3Bucket(),
+          Key: storagePath,
+        }),
+      );
 
-    if (!response.Body) {
-      throw new Error("S3 object had no response body");
+      if (!response.Body) throw new Error("S3 object had no response body");
+      return Buffer.from(await response.Body.transformToByteArray());
+    } catch (error) {
+      if (!shouldUseSupabaseReadFallback(error)) throw error;
+      return downloadSupabaseObject(normalizeStoragePath(path));
     }
-
-    return Buffer.from(await response.Body.transformToByteArray());
   }
 
+  return downloadSupabaseObject(storagePath);
+}
+
+async function downloadSupabaseObject(path: string) {
   const { data, error } = await adminSupabase.storage
     .from(env.CERTIFICATE_STORAGE_BUCKET)
-    .download(storagePath);
+    .download(path);
 
   if (error || !data) {
     throw new Error(`Failed to download storage object: ${error?.message ?? "Unknown error"}`);
   }
 
   return Buffer.from(await data.arrayBuffer());
+}
+
+function shouldUseSupabaseReadFallback(error: unknown) {
+  if (!env.STORAGE_S3_READ_FALLBACK_TO_SUPABASE) return false;
+  if (!error || typeof error !== "object") return false;
+
+  const candidate = error as { name?: unknown; Code?: unknown; code?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return candidate.name === "NoSuchKey"
+    || candidate.Code === "NoSuchKey"
+    || candidate.code === "NoSuchKey"
+    || candidate.$metadata?.httpStatusCode === 404;
 }
 
 export async function deleteObject(path: string) {

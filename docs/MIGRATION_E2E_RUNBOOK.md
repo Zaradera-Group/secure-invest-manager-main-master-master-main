@@ -70,6 +70,8 @@ STORAGE_TRANSFER_EXECUTE=true npm run transfer:storage:s3
 
 The transfer preserves each object path beneath `S3_PREFIX`, skips existing same-size objects, refuses to overwrite a conflicting object, verifies size after upload, and never deletes a Supabase source object. Run `npm run audit:storage:supabase` again and compare it with the transfer summaries before switching `STORAGE_PROVIDER`.
 
+For the first S3 deployment, set `STORAGE_PROVIDER=s3` and `STORAGE_S3_READ_FALLBACK_TO_SUPABASE=true`. New writes use S3. A historical object missing in S3 can temporarily be read from Supabase Storage, avoiding a broken certificate download while the transfer is being verified. After the transfer audit passes, set `STORAGE_S3_READ_FALLBACK_TO_SUPABASE=false` and redeploy. Do not delete Supabase objects before that final check.
+
 ## 3. MongoDB Reconciliation Checks
 
 Run these from Render Shell after the latest backend deployment. Do not run the commands from a local machine that cannot resolve the Atlas SRV hostname.
@@ -197,6 +199,16 @@ PUBLIC_INTAKE_EMAIL_OUTBOX_SHADOW_ENABLED=true
 ```
 
 Redeploy Render, submit one controlled public-intake form, and inspect `notification_delivery_outbox` for `public_intake_receipt` records in `shadow` mode. There should be one investor receipt and one record for each internal recipient. The direct email path remains authoritative and the Render worker cannot claim these shadow records. Do not enable a live public-intake email authority until the Mongo-backed receipt renderer and its controlled delivery test are complete.
+
+After the shadow has been accepted, make the reversible delivery switch:
+
+```text
+PUBLIC_INTAKE_EMAIL_OUTBOX_SHADOW_ENABLED=false
+PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY=render
+NOTIFICATION_RENDER_WORKER_ENABLED=true
+```
+
+Redeploy Render and submit one controlled intake. The API writes the mirrored request before adding `live` receipt jobs. Render sends only those live jobs and reads the form from MongoDB at send time; the outbox therefore stores delivery metadata rather than the full form. If MongoDB preparation fails, the API logs the reason and sends the receipt through the legacy sender for that request. Roll back by setting `PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY=legacy` and redeploying.
 
 ## 7. Existing Staff Workflow Test
 

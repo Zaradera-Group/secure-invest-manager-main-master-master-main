@@ -100,6 +100,8 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => value === true || value === "true"),
+  // The direct sender remains the default until public-intake receipt outbox delivery is accepted.
+  PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY: z.enum(["legacy", "render"]).default("legacy"),
   BIRTHDAY_SMS_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   BIRTHDAY_SMS_TIMEZONE: z.string().optional().transform((value) => value?.trim() || undefined),
   PUBLIC_INTAKE_ASSIGNEE_USER_ID: z.string().optional().transform((value) => value?.trim() || undefined),
@@ -173,6 +175,11 @@ const envSchema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   S3_PREFIX: z.string().optional().transform((value) => value?.trim().replace(/^\/+|\/+$/g, "") || undefined),
   S3_SIGNED_URL_EXPIRES_SECONDS: z.coerce.number().int().positive().default(900),
+  // During the S3 cutover, allow reads of objects not copied yet to fall back to Supabase Storage.
+  STORAGE_S3_READ_FALLBACK_TO_SUPABASE: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => value === true || value === "true"),
   STORAGE_HEALTH_CHECK_ENABLED: z
     .union([z.string(), z.boolean()])
     .optional()

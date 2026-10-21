@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { canSendEmail, sendBirthdayEmail, sendPlainEmail } from "../lib/email.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
 import { sendPlainSms } from "../lib/sms.js";
+import { getPublicIntakeRequestFromMongo } from "../repositories/public-intake.mongo.js";
 import {
   claimNextNotificationDelivery,
   completeNotificationDelivery,
@@ -19,6 +20,7 @@ const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const getWorkerNotificationTypes = () => [
   ...(env.BIRTHDAY_DELIVERY_AUTHORITY === "render" ? ["birthday_greeting"] : []),
   ...(env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY === "render" ? ["certificate_stage_notification"] : []),
+  ...(env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY === "render" ? ["public_intake_receipt"] : []),
 ];
 
 async function processBirthdayGreeting(job: NotificationDeliveryOutboxRecord) {
@@ -80,9 +82,54 @@ async function processCertificateStageNotification(job: NotificationDeliveryOutb
   throw new Error(`Unsupported certificate delivery channel: ${job.channel}`);
 }
 
+const escapeHtml = (value: string) => value
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;")
+  .replaceAll("'", "&#39;");
+
+async function processPublicIntakeReceipt(job: NotificationDeliveryOutboxRecord) {
+  if (job.channel !== "email") throw new Error(`Unsupported public-intake delivery channel: ${job.channel}`);
+  if (!canSendEmail()) throw new Error("Public-intake email delivery is disabled or not configured");
+
+  const requestId = text(job.payload.requestId);
+  const recipientKind = text(job.payload.recipientKind);
+  if (!requestId || !["internal", "investor"].includes(recipientKind)) {
+    throw new Error("Public-intake receipt delivery is missing request metadata");
+  }
+
+  const record = await getPublicIntakeRequestFromMongo(requestId);
+  if (!record) throw new Error("Mirrored public-intake request is not available yet");
+
+  const investorName = text(record.submitted_by_name) || "Investor";
+  const amount = record.investment_amount == null ? "Not provided" : Number(record.investment_amount).toLocaleString();
+  const currency = text(record.currency_code) || "NGN";
+  const tenure = record.tenure == null ? "Not provided" : String(record.tenure);
+  const maturityDate = text(record.maturity_date) || "Not provided";
+  const appUrl = env.APP_URL?.replace(/\/$/, "") ?? "";
+
+  if (recipientKind === "internal") {
+    await sendPlainEmail(
+      job.recipient,
+      `Your Zaraderavest form has been received: ${investorName}`,
+      `<p>A public investment form has been received for <strong>${escapeHtml(investorName)}</strong>.</p><p><strong>Request ID:</strong> ${escapeHtml(requestId)}</p><p><strong>Amount:</strong> ${escapeHtml(amount)} ${escapeHtml(currency)}</p><p><strong>Tenure:</strong> ${escapeHtml(tenure)} month(s)</p><p><strong>Maturity date:</strong> ${escapeHtml(maturityDate)}</p><p><a href="${escapeHtml(`${appUrl}/public-intake-inbox`)}">Open Public Intake Inbox</a></p>`,
+    );
+    return "email";
+  }
+
+  await sendPlainEmail(
+    job.recipient,
+    "Zaraderavest Form Received - Confirmation",
+    `<p>Thank you, ${escapeHtml(investorName)}. Your submission has been received and queued for review.</p><p><strong>Request ID:</strong> ${escapeHtml(requestId)}</p><p><strong>Investment amount:</strong> ${escapeHtml(amount)} ${escapeHtml(currency)}</p><p><strong>Tenure:</strong> ${escapeHtml(tenure)} month(s)</p><p><strong>Maturity date:</strong> ${escapeHtml(maturityDate)}</p><p>Your investment certificate will be sent within 72 hours. Thank you.</p>`,
+  );
+  return "email";
+}
+
 async function processDelivery(job: NotificationDeliveryOutboxRecord) {
   if (job.notificationType === "birthday_greeting") return processBirthdayGreeting(job);
   if (job.notificationType === "certificate_stage_notification") return processCertificateStageNotification(job);
+  if (job.notificationType === "public_intake_receipt") return processPublicIntakeReceipt(job);
   throw new Error(`Unsupported Render notification type: ${job.notificationType}`);
 }
 
@@ -143,7 +190,7 @@ export function startNotificationRenderWorkerJob() {
   const job = cron.schedule(schedule, () => {
     void runNotificationRenderWorker();
   }, { timezone: "Africa/Lagos" });
-  console.log(`[notification-render-worker] Scheduled with cron "${schedule}" (Africa/Lagos); active authorities: birthday=${env.BIRTHDAY_DELIVERY_AUTHORITY}, certificate=${env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY}`);
+  console.log(`[notification-render-worker] Scheduled with cron "${schedule}" (Africa/Lagos); active authorities: birthday=${env.BIRTHDAY_DELIVERY_AUTHORITY}, certificate=${env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY}, publicIntake=${env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY}`);
   void runNotificationRenderWorker();
   return job;
 }

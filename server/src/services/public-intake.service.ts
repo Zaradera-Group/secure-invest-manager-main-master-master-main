@@ -8,6 +8,7 @@ import {
   deletePublicIntakeRequestFromMongoSafely,
   getPublicIntakeRequestFromMongo,
   listPublicIntakeRequestsFromMongo,
+  mirrorPublicIntakeRequestToMongo,
   mirrorPublicIntakeRequestToMongoSafely,
 } from "../repositories/public-intake.mongo.js";
 import {
@@ -226,12 +227,13 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
 
   const requestId = requestRecord.id as string;
   const submittedAt = new Date().toISOString();
-  mirrorPublicIntakeRequestToMongoSafely({
+  const mongoMirrorInput = {
     requestId,
     intakeRecord,
     requestRecord: requestRecord as Record<string, unknown>,
     submittedAt,
-  });
+  };
+  mirrorPublicIntakeRequestToMongoSafely(mongoMirrorInput);
 
   const notificationPayload = buildPublicIntakeNotificationPayload({
     investor: input,
@@ -273,6 +275,27 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
   const failedNotifications = notificationResults.filter((result) => result.status === "rejected");
   if (failedNotifications.length > 0) {
     console.warn("[public-intake] One or more dashboard notifications failed:", failedNotifications.length);
+  }
+
+  if (env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY === "render") {
+    try {
+      // The worker renders from the mirrored record instead of duplicating sensitive form content in the outbox.
+      if (!env.PUBLIC_INTAKE_MONGO_MIRROR_ENABLED || !isMongoConfigured()) {
+        throw new Error("MongoDB public-intake mirroring is not available");
+      }
+      await mirrorPublicIntakeRequestToMongo(mongoMirrorInput);
+      await enqueuePublicIntakeReceiptEmails({
+        requestId,
+        investorEmail: input.email.trim().toLowerCase(),
+        internalRecipients,
+      }, "live");
+      return { requestId, assigneeEmail };
+    } catch (error) {
+      console.error("[public-intake] Render receipt delivery preparation failed; using the legacy sender", {
+        requestId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   const deliveryResults = await Promise.allSettled([
@@ -324,25 +347,38 @@ function mirrorPublicIntakeReceiptEmailsToOutboxSafely(input: {
 }) {
   if (!env.PUBLIC_INTAKE_EMAIL_OUTBOX_SHADOW_ENABLED || !isMongoConfigured()) return;
 
+  void enqueuePublicIntakeReceiptEmails(input, "shadow").catch((error) => {
+    console.warn("[public-intake] Failed to mirror receipt email intent to MongoDB", {
+      requestId: input.requestId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+async function enqueuePublicIntakeReceiptEmails(input: {
+  requestId: string;
+  investorEmail: string;
+  internalRecipients: Array<{ userId?: string | null; email: string; role: string }>;
+}, deliveryMode: "shadow" | "live") {
   const jobs = [
     ...input.internalRecipients.map((recipient) => ({
       recipient: recipient.email,
       recipientKind: "internal",
       recipientRole: recipient.role,
-      dedupeKey: `public_intake_receipt:shadow:${input.requestId}:internal:${recipient.userId ?? recipient.role}`,
+      dedupeKey: `public_intake_receipt:${deliveryMode}:${input.requestId}:internal:${recipient.userId ?? recipient.role}`,
     })),
     {
       recipient: input.investorEmail,
       recipientKind: "investor",
       recipientRole: null,
-      dedupeKey: `public_intake_receipt:shadow:${input.requestId}:investor`,
+      dedupeKey: `public_intake_receipt:${deliveryMode}:${input.requestId}:investor`,
     },
   ];
 
-  void Promise.allSettled(jobs.map((job) => enqueueNotificationDelivery({
+  const results = await Promise.allSettled(jobs.map((job) => enqueueNotificationDelivery({
     notificationType: "public_intake_receipt",
     channel: "email",
-    deliveryMode: "shadow",
+    deliveryMode,
     recipient: job.recipient,
     payload: {
       requestId: input.requestId,
@@ -350,10 +386,9 @@ function mirrorPublicIntakeReceiptEmailsToOutboxSafely(input: {
       recipientRole: job.recipientRole,
     },
     dedupeKey: job.dedupeKey,
-  }))).then((results) => {
-    const failed = results.filter((result) => result.status === "rejected").length;
-    if (failed > 0) console.warn("[public-intake] Failed to mirror receipt email intent to MongoDB", { requestId: input.requestId, failed });
-  });
+  })));
+  const failed = results.filter((result) => result.status === "rejected").length;
+  if (failed > 0) throw new Error(`Failed to enqueue ${failed} public-intake receipt email job(s)`);
 }
 
 export async function sendPublicIntakeOtp(payload: unknown) {
