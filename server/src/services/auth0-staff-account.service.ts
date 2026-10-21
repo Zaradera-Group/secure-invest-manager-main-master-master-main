@@ -2,7 +2,9 @@ import { adminSupabase } from "../lib/supabase.js";
 import {
   getStaffAccountByAuth0Subject,
   getStaffAccountByEmail,
+  listStaffAccounts,
   upsertStaffAccount,
+  updateStaffAccountReconciliation,
 } from "../repositories/staff-accounts.mongo.js";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
 
@@ -24,6 +26,32 @@ const normalizeRole = (value: unknown): AppRole | null => {
 export class Auth0StaffAccountMappingError extends Error {}
 
 export class Auth0StaffAccountService {
+  async reconcileMappings() {
+    const accounts = await listStaffAccounts();
+    let active = 0;
+    let disabled = 0;
+    let changed = 0;
+
+    for (const account of accounts) {
+      const isValid = await this.isCurrentStaffAccount(account.email, account.role, account.legacyUserId);
+      if (isValid) {
+        active += 1;
+      } else {
+        disabled += 1;
+      }
+
+      if (account.isActive !== isValid) {
+        await updateStaffAccountReconciliation({
+          auth0Subject: account.auth0Subject,
+          isActive: isValid,
+        });
+        changed += 1;
+      }
+    }
+
+    return { checked: accounts.length, active, disabled, changed };
+  }
+
   async resolveMappedActiveUser(actor: AuthenticatedUser): Promise<AuthenticatedUser> {
     if (actor.provider !== "auth0") {
       return actor;
@@ -131,5 +159,30 @@ export class Auth0StaffAccountService {
     }
 
     throw new Error("No existing Zaradera staff user was found for this Auth0 email");
+  }
+
+  private async isCurrentStaffAccount(email: string, role: AppRole, legacyUserId: string) {
+    const [allowlistResult, roleResult] = await Promise.all([
+      adminSupabase
+        .from("allowed_auth_users")
+        .select("role")
+        .eq("email", email)
+        .eq("is_active", true)
+        .maybeSingle(),
+      adminSupabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", legacyUserId)
+        .maybeSingle(),
+    ]);
+
+    if (allowlistResult.error) {
+      throw new Error(`Failed to reconcile the approved Auth0 staff account: ${allowlistResult.error.message}`);
+    }
+    if (roleResult.error) {
+      throw new Error(`Failed to reconcile the legacy Zaradera staff role: ${roleResult.error.message}`);
+    }
+
+    return normalizeRole(allowlistResult.data?.role) === role && normalizeRole(roleResult.data?.role) === role;
   }
 }

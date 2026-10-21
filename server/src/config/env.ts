@@ -23,6 +23,11 @@ const envSchema = z.object({
   AUTH0_AUDIENCE: z.string().optional().transform((value) => value?.trim() || undefined),
   AUTH0_ROLES_CLAIM: z.string().default("https://zaraderavest.com/roles"),
   AUTH0_EMAIL_CLAIM: z.string().default("https://zaraderavest.com/email"),
+  AUTH0_STAFF_ACCOUNTS_MONGO_RECONCILIATION_ENABLED: z
+    .union([z.string(), z.boolean()])
+    .optional()
+    .transform((value) => (value === undefined ? true : value === true || value === "true")),
+  AUTH0_STAFF_ACCOUNTS_MONGO_RECONCILIATION_CRON: z.string().optional().transform((value) => value?.trim() || undefined),
   MONGODB_URI: z.string().optional().transform((value) => value?.trim() || undefined),
   MONGODB_DB_NAME: z.string().optional().transform((value) => value?.trim() || undefined),
   EMAIL_PROVIDER: z.enum(["resend", "smtp"]).default("resend"),

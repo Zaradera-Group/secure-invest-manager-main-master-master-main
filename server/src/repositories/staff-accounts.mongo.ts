@@ -11,6 +11,7 @@ export type StaffAccount = {
   isActive: boolean;
   provisionedAt: string;
   lastVerifiedAt: string;
+  lastReconciledAt?: string;
 };
 
 let indexesReady: Promise<void> | null = null;
@@ -37,6 +38,21 @@ export async function getStaffAccountByEmail(email: string) {
 
 export async function getStaffAccountByAuth0Subject(auth0Subject: string) {
   return (await getCollection()).findOne({ auth0Subject });
+}
+
+export async function listStaffAccounts() {
+  return (await getCollection()).find({}).toArray();
+}
+
+export async function updateStaffAccountReconciliation(input: {
+  auth0Subject: string;
+  isActive: boolean;
+}) {
+  const now = new Date().toISOString();
+  await (await getCollection()).updateOne(
+    { auth0Subject: input.auth0Subject },
+    { $set: { isActive: input.isActive, lastReconciledAt: now } },
+  );
 }
 
 export async function upsertStaffAccount(account: Omit<StaffAccount, "provisionedAt" | "lastVerifiedAt">) {
