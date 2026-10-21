@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 
 const NOTIFICATIONS_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
 
 type WorkflowNotificationRole = 'manager' | 'general_manager' | 'ceo' | 'investor';
 
@@ -86,8 +86,6 @@ async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH'
 export function useDashboardNotifications(limit = 20) {
   const { user, role } = useAuth();
   const userId = user?.id ?? null;
-  const userEmail = user?.email?.toLowerCase() ?? null;
-  useRealtimeNotificationInvalidation(user?.id, user?.email ?? null, role ?? null);
 
   return useQuery({
     queryKey: ['dashboard-notifications', user?.id, user?.email, role, limit],
@@ -96,14 +94,13 @@ export function useDashboardNotifications(limit = 20) {
       const records = await callNotificationsBackend<Array<Record<string, unknown>>>(`/notifications/dashboard?limit=${limit}`, 'GET');
       return records.map(mapNotificationRecord);
     },
+    refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
   });
 }
 
 export function useUnreadDashboardNotificationCount() {
   const { user, role } = useAuth();
   const userId = user?.id ?? null;
-  const userEmail = user?.email?.toLowerCase() ?? null;
-  useRealtimeNotificationInvalidation(user?.id, user?.email ?? null, role ?? null);
 
   return useQuery({
     queryKey: ['dashboard-notifications-unread-count', user?.id, user?.email, role],
@@ -112,6 +109,7 @@ export function useUnreadDashboardNotificationCount() {
       const result = await callNotificationsBackend<{ count: number }>('/notifications/dashboard/unread-count', 'GET');
       return result.count;
     },
+    refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
   });
 }
 
@@ -143,67 +141,4 @@ export function useMarkAllDashboardNotificationsRead() {
       queryClient.invalidateQueries({ queryKey: ['dashboard-notifications-unread-count'] });
     },
   });
-}
-
-function useRealtimeNotificationInvalidation(userId?: string, email?: string | null, role?: string | null) {
-  const queryClient = useQueryClient();
-  const channelNameRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!userId || !role) return;
-
-    if (!channelNameRef.current) {
-      const uniqueSuffix =
-        typeof globalThis.crypto?.randomUUID === 'function'
-          ? globalThis.crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-      channelNameRef.current = `workflow-notifications-${userId}-${uniqueSuffix}`;
-    }
-
-    const channelName = channelNameRef.current;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
-        (payload) => {
-          const record = (payload.new ?? payload.old) as Partial<WorkflowNotification> | null;
-          if (!record) return;
-
-          const notificationRole = mapAppRoleToNotificationRole(role);
-          const matchesUser = record.recipient_user_id === userId;
-          const matchesEmail = !!email && record.recipient_email?.toLowerCase() === email.toLowerCase();
-          const matchesRole = notificationRole ? record.user_role === notificationRole : false;
-
-          if (matchesUser || matchesEmail || matchesRole) {
-            queryClient.invalidateQueries({ queryKey: ['dashboard-notifications'] });
-            queryClient.invalidateQueries({ queryKey: ['dashboard-notifications-unread-count'] });
-          }
-        },
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [email, queryClient, role, userId]);
-
-  useEffect(() => {
-    channelNameRef.current = null;
-  }, [userId, role]);
-}
-
-function mapAppRoleToNotificationRole(role: string | null): WorkflowNotificationRole | null {
-  switch (role) {
-    case 'investment_manager':
-    case 'accountant':
-      return 'manager';
-    case 'general_manager':
-      return 'general_manager';
-    case 'super_admin':
-      return 'ceo';
-    default:
-      return 'investor';
-  }
 }
