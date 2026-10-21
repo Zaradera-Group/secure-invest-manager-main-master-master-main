@@ -22,6 +22,7 @@ const envSchema = z.object({
   AUTH0_ISSUER_BASE_URL: z.string().url().optional().transform((value) => value?.trim().replace(/\/+$/, "") || undefined),
   AUTH0_AUDIENCE: z.string().optional().transform((value) => value?.trim() || undefined),
   AUTH0_ROLES_CLAIM: z.string().default("https://zaraderavest.com/roles"),
+  AUTH0_EMAIL_CLAIM: z.string().default("https://zaraderavest.com/email"),
   MONGODB_URI: z.string().optional().transform((value) => value?.trim() || undefined),
   MONGODB_DB_NAME: z.string().optional().transform((value) => value?.trim() || undefined),
   EMAIL_PROVIDER: z.enum(["resend", "smtp"]).default("resend"),

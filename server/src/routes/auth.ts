@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getApprovedEmailAccess, getApprovedUserAccess } from "../controllers/auth.controller.js";
+import { getApprovedEmailAccess, getApprovedUserAccess, provisionAuth0StaffAccount } from "../controllers/auth.controller.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { requireDualAuth } from "../middleware/auth.js";
 
@@ -17,6 +17,8 @@ authRouter.get("/me", requireDualAuth, (request, response) => {
     permissions: request.authUser!.permissions ?? [],
   });
 });
+
+authRouter.post("/auth0/staff-account", requireDualAuth, provisionAuth0StaffAccount);
 
 authRouter.post("/verify-human", async (request, response) => {
   const token = typeof request.body?.token === "string" ? request.body.token : "";

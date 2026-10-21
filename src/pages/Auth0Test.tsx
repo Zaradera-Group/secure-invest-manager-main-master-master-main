@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
-import { LogIn, LogOut, ShieldCheck } from 'lucide-react';
+import { Link2, LogIn, LogOut, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { auth0TestConfig, isAuth0TestConfigured, staffAuth0Roles } from '@/lib/auth0Test';
 
@@ -27,6 +27,9 @@ function Auth0TestSession() {
   const [renderIdentity, setRenderIdentity] = useState<RenderIdentity | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [isCheckingRender, setIsCheckingRender] = useState(false);
+  const [mappingResult, setMappingResult] = useState<StaffAccountMapping | null>(null);
+  const [mappingError, setMappingError] = useState<string | null>(null);
+  const [isProvisioningMapping, setIsProvisioningMapping] = useState(false);
   const roles = getRoles(user?.[auth0TestConfig.rolesClaim]);
   const isStaff = roles.some((role) => staffAuth0Roles.has(role));
   const apiUrl = import.meta.env.VITE_CERTIFICATE_API_URL?.trim().replace(/\/+$/, '');
@@ -59,6 +62,33 @@ function Auth0TestSession() {
       setRenderError(validationError instanceof Error ? validationError.message : 'Unable to validate the Auth0 token with Render.');
     } finally {
       setIsCheckingRender(false);
+    }
+  };
+
+  const provisionStaffMapping = async () => {
+    if (!apiUrl || !auth0TestConfig.audience) {
+      setMappingError('Render API URL or Auth0 audience is not configured for this deployment.');
+      return;
+    }
+
+    setIsProvisioningMapping(true);
+    setMappingError(null);
+    try {
+      const token = await getAccessTokenSilently({ authorizationParams: { audience: auth0TestConfig.audience } });
+      const response = await fetch(`${apiUrl}/auth/auth0/staff-account`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => null) as StaffAccountMapping | { message?: string } | null;
+      if (!response.ok || !payload || !('mapped' in payload)) {
+        throw new Error(payload && 'message' in payload ? payload.message ?? 'Render could not create the staff mapping.' : 'Render could not create the staff mapping.');
+      }
+      setMappingResult(payload);
+    } catch (mappingFailure) {
+      setMappingResult(null);
+      setMappingError(mappingFailure instanceof Error ? mappingFailure.message : 'Unable to create the Auth0 staff mapping.');
+    } finally {
+      setIsProvisioningMapping(false);
     }
   };
 
@@ -119,6 +149,16 @@ function Auth0TestSession() {
               </p>
             )}
             {renderError && <p className="text-sm text-destructive">Render validation failed: {renderError}</p>}
+            <Button variant="outline" disabled={isProvisioningMapping} onClick={() => void provisionStaffMapping()}>
+              <Link2 aria-hidden="true" />
+              {isProvisioningMapping ? 'Linking staff account...' : 'Link Auth0 account to staff record'}
+            </Button>
+            {mappingResult && (
+              <p className="border border-border bg-secondary/40 p-4 text-sm">
+                Auth0 account is linked to the approved <strong>{mappingResult.role}</strong> staff record.
+              </p>
+            )}
+            {mappingError && <p className="text-sm text-destructive">Staff mapping failed: {mappingError}</p>}
             <Button variant="outline" onClick={() => void logout({ logoutParams: { returnTo: auth0TestConfig.redirectUri } })}>
               <LogOut aria-hidden="true" />
               Sign out of Auth0 test
@@ -138,6 +178,14 @@ type RenderIdentity = {
   role: string;
   provider: 'auth0' | 'supabase';
   permissions: string[];
+};
+
+type StaffAccountMapping = {
+  mapped: true;
+  auth0Subject: string;
+  email: string;
+  role: string;
+  lastVerifiedAt: string;
 };
 
 function getRoles(value: unknown): string[] {
