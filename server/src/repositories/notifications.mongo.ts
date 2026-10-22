@@ -243,6 +243,20 @@ export async function countUnreadDashboardNotificationsFromMongo(filter: Notific
   return db.collection("notifications").countDocuments({ ...buildVisibilityFilter(filter), isRead: false });
 }
 
+export async function listCertificateNotificationsFromMongo(certificateId: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const records = await (await getMongoDb()).collection<MirroredNotificationDocument>("notifications")
+    .find({ certificateId }, { projection: { rawSupabaseRecord: 1 } })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  return records.flatMap((record) => record.rawSupabaseRecord ? [record.rawSupabaseRecord] : []);
+}
+
 export async function createNativeDashboardNotification(input: {
   dedupeKey: string;
   recipientUserId: string;
@@ -297,5 +311,71 @@ export async function createNativeDashboardNotification(input: {
     },
     { upsert: true },
   );
+  return { id, inserted: result.upsertedCount === 1 };
+}
+
+export async function createNativeCertificateNotification(input: {
+  certificateId: string;
+  userRole: "manager" | "general_manager" | "ceo" | "investor";
+  recipientUserId?: string;
+  recipientEmail?: string;
+  title: string;
+  detail: string;
+  actionPath?: string | null;
+}) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const now = new Date().toISOString();
+  const id = `mongo:${randomUUID()}`;
+  const dedupeKey = [
+    "certificate",
+    input.certificateId,
+    input.userRole,
+    input.recipientUserId ?? input.recipientEmail ?? "unknown",
+    input.detail,
+  ].join(":");
+  const notification = {
+    id,
+    certificate_id: input.certificateId,
+    title: input.title,
+    detail: input.detail,
+    message: input.detail,
+    user_role: input.userRole,
+    recipient_user_id: input.recipientUserId ?? null,
+    recipient_email: input.recipientEmail ?? null,
+    action_path: input.actionPath ?? null,
+    is_read: false,
+    read_at: null,
+    created_at: now,
+  };
+
+  const result = await (await getMongoDb()).collection("notifications").updateOne(
+    { nativeDedupeKey: dedupeKey },
+    {
+      $setOnInsert: {
+        supabaseNotificationId: id,
+        nativeDedupeKey: dedupeKey,
+        certificateId: input.certificateId,
+        recipientUserId: input.recipientUserId ?? null,
+        recipientEmail: input.recipientEmail ?? null,
+        userRole: input.userRole,
+        title: input.title,
+        detail: input.detail,
+        message: input.detail,
+        actionPath: input.actionPath ?? null,
+        isRead: false,
+        readAt: null,
+        createdAt: now,
+        source: "mongo_native",
+        rawSupabaseRecord: notification,
+        insertedAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
   return { id, inserted: result.upsertedCount === 1 };
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { adminSupabase } from "../lib/supabase.js";
 import {
   sendCeoNotificationEmail,
@@ -11,6 +12,7 @@ import {
   createSignedObjectUrl,
   deleteObject,
   downloadObject,
+  isS3StorageEnabled,
   uploadObject,
 } from "../lib/storage.js";
 import {
@@ -22,8 +24,15 @@ import {
 import { insertAuditLog } from "../lib/audit.js";
 import { env } from "../config/env.js";
 import { getMongoDb, isMongoConfigured } from "../lib/mongodb.js";
-import { mirrorNotificationToMongo, mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import {
+  createNativeCertificateNotification,
+  listCertificateNotificationsFromMongo,
+  mirrorNotificationToMongo,
+  mirrorNotificationToMongoSafely,
+} from "../repositories/notifications.mongo.js";
 import { enqueueNotificationDelivery } from "../repositories/notification-delivery-outbox.mongo.js";
+import { getStaffDirectoryEntryFromMongo, listStaffDirectoryFromMongo } from "../repositories/staff-directory.mongo.js";
+import { listActiveStaffContactsByRoles } from "../repositories/staff-contacts.mongo.js";
 import {
   deleteWorkflowRecordsByFieldFromMongoSafely,
   deleteWorkflowRecordsFromMongo,
@@ -339,6 +348,20 @@ export class CertificatesService {
     const certificate = await this.getCertificate(certificateId);
     await this.assertCertificateAccess(certificate, actor);
 
+    const preferMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo"
+      || env.NOTIFICATIONS_WRITE_MODE === "dual"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary certificate notification reads");
+    }
+    if (preferMongo) {
+      try {
+        return await listCertificateNotificationsFromMongo(certificateId);
+      } catch (error) {
+        throw new Error(`Failed to fetch certificate notifications from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     const { data, error } = await adminSupabase
       .from("notifications")
       .select("id, user_role, message, created_at")
@@ -453,6 +476,45 @@ export class CertificatesService {
       return new Map<string, CreatorSummary>();
     }
 
+    const preferMongo = env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary creator lookups");
+    }
+    if (preferMongo) {
+      try {
+        const entries = await listStaffDirectoryFromMongo();
+        const entriesByUserId = new Map(entries.map((entry) => [entry.userId, entry]));
+        const missingUserIds = userIds.filter((userId) => !entriesByUserId.has(userId));
+
+        if (missingUserIds.length === 0) {
+          return new Map<string, CreatorSummary>(
+            userIds.map((userId) => {
+              const entry = entriesByUserId.get(userId);
+              const role = entry?.roles[0] ?? null;
+              const fullName = entry?.fullName?.trim() || null;
+              const roleLabel = formatCreatorRoleLabel(role);
+
+              return [
+                userId,
+                {
+                  id: userId,
+                  full_name: fullName,
+                  role,
+                  roleLabel,
+                  displayName: fullName || roleLabel,
+                },
+              ];
+            }),
+          );
+        }
+      } catch (error) {
+        throw new Error(`Failed to resolve certificate creators from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      return new Map<string, CreatorSummary>();
+    }
+
     const [profilesResult, rolesResult] = await Promise.all([
       adminSupabase.from("profiles").select("id, full_name").in("id", userIds),
       adminSupabase.from("user_roles").select("user_id, role").in("user_id", userIds),
@@ -510,14 +572,15 @@ export class CertificatesService {
 
   private async readInvestors(): Promise<Array<Record<string, any>>> {
     const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
-      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary investor reads");
+    }
+    if (preferMongo) {
       try {
         return await listWorkflowRecordsFromMongo("investors") as Array<Record<string, any>>;
       } catch (error) {
-        console.warn("[workflow-data.mongo] MongoDB investor list read failed; falling back to Supabase", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch investors from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -535,17 +598,19 @@ export class CertificatesService {
 
   private async readInvestor(investorId: string): Promise<Record<string, any> | null> {
     const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
-      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary investor reads");
+    }
+    if (preferMongo) {
       try {
         const record = await getWorkflowRecordFromMongo("investors", investorId);
         if (record) return record as Record<string, any>;
       } catch (error) {
-        console.warn("[workflow-data.mongo] MongoDB investor detail read failed; falling back to Supabase", {
-          investorId,
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch investor from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
+
+      return null;
     }
 
     const { data, error } = await adminSupabase
@@ -563,6 +628,20 @@ export class CertificatesService {
 
   async createInvestor(actor: AuthenticatedUser, payload: unknown) {
     const input = createInvestorSchema.parse(payload);
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
+      const now = new Date().toISOString();
+      const record = {
+        id: randomUUID(),
+        ...input,
+        created_by: actor.id,
+        created_at: now,
+        updated_at: now,
+      };
+      await this.writeMongoWorkflowRecord("investors", record);
+      await this.mirrorWorkflowRecordToSupabase("investors", record);
+      return record;
+    }
+
     const { data, error } = await adminSupabase
       .from("investors")
       .insert({
@@ -626,14 +705,15 @@ export class CertificatesService {
 
   private async readCertificatesForRead(): Promise<CertificateRecord[]> {
     const preferMongo = env.CERTIFICATES_MONGO_READ_MODE === "mongo"
-      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary certificate reads");
+    }
+    if (preferMongo) {
       try {
         return await listWorkflowRecordsFromMongo("certificates") as unknown as CertificateRecord[];
       } catch (error) {
-        console.warn("[workflow-data.mongo] MongoDB certificate list read failed; falling back to Supabase", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch certificates from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -655,8 +735,11 @@ export class CertificatesService {
     investorName: string,
   ): Promise<CertificateRecord | null> {
     const preferMongo = env.CERTIFICATES_MONGO_READ_MODE === "mongo"
-      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary certificate reads");
+    }
+    if (preferMongo) {
       try {
         const certificates = await listWorkflowRecordsFromMongo("certificates") as unknown as CertificateRecord[];
         const matches = certificates.filter((certificate) => {
@@ -669,11 +752,10 @@ export class CertificatesService {
           Date.parse(right.created_at ?? "") - Date.parse(left.created_at ?? "")
         ))[0] ?? null;
       } catch (error) {
-        console.warn("[workflow-data.mongo] MongoDB latest certificate read failed; falling back to Supabase", {
-          investorId,
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch latest certificate from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
+
+      return null;
     }
 
     let query = adminSupabase
@@ -795,6 +877,60 @@ export class CertificatesService {
       }),
     );
 
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while WORKFLOW_DATA_MONGO_WRITE_MODE=mongo");
+      }
+
+      const db = await getMongoDb();
+      await Promise.all([
+        deleteWorkflowRecordsFromMongo({ table: "investors", supabaseIds: [investor.id] }),
+        deleteWorkflowRecordsFromMongo({ table: "certificates", supabaseIds: certificateIds }),
+        db.collection("certificate_approval_events").deleteMany({ certificateId: { $in: certificateIds } }),
+        db.collection("investor_certificates").deleteMany({ investorId: investor.id }),
+        db.collection("notifications").deleteMany({ certificateId: { $in: certificateIds } }),
+      ]);
+
+      const legacyCleanup = [
+        adminSupabase.from("dashboard_notifications").delete().eq("related_investor_id", investor.id),
+        adminSupabase.from("email_notifications").delete().eq("investor_id", investor.id),
+        adminSupabase.from("email_notifications_archive").delete().eq("investor_id", investor.id),
+        adminSupabase.from("notification_jobs").delete().eq("investor_id", investor.id),
+        adminSupabase.from("notification_jobs_archive").delete().eq("investor_id", investor.id),
+        adminSupabase.from("certificate_approval_events").delete().in("certificate_id", certificateIds),
+        adminSupabase.from("notifications").delete().in("certificate_id", certificateIds),
+        adminSupabase.from("certificates").delete().in("id", certificateIds),
+        adminSupabase.from("investor_certificates").delete().eq("investor_id", investor.id),
+        adminSupabase.from("investors").delete().eq("id", investor.id),
+      ];
+      const cleanupResults = await Promise.all(legacyCleanup);
+      cleanupResults.forEach((result, index) => {
+        if (result.error) {
+          console.warn("[workflow-data.mongo] Mongo delete succeeded but Supabase compatibility cleanup failed", {
+            investorId: investor.id,
+            operation: index,
+            reason: result.error.message,
+          });
+        }
+      });
+
+      await insertAuditLog({
+        action: "investor_deleted_permanently",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        targetEmail: investor.email,
+        metadata: {
+          investorId: investor.id,
+          investorName: investor.name,
+          certificateCount: certificates.length,
+          writeAuthority: "mongo",
+        },
+      });
+
+      return { message: "Investor deleted permanently." };
+    }
+
     await Promise.all([
       adminSupabase.from("dashboard_notifications").delete().eq("related_investor_id", investor.id),
       adminSupabase.from("email_notifications").delete().eq("investor_id", investor.id),
@@ -871,15 +1007,29 @@ export class CertificatesService {
       }
     }
 
-    const { data, error } = await adminSupabase
-      .from("investors")
-      .update(input)
-      .eq("id", investorId)
-      .select("*")
-      .single();
+    let data: Record<string, any>;
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
+      const updatedRecord = {
+        ...investorBeforeUpdate,
+        ...input,
+        id: investorId,
+        updated_at: new Date().toISOString(),
+      };
+      await this.writeMongoWorkflowRecord("investors", updatedRecord);
+      await this.mirrorWorkflowRecordToSupabase("investors", updatedRecord);
+      data = updatedRecord;
+    } else {
+      const result = await adminSupabase
+        .from("investors")
+        .update(input)
+        .eq("id", investorId)
+        .select("*")
+        .single();
 
-    if (error || !data) {
-      throw new Error(`Failed to update investor: ${error?.message ?? "Unknown error"}`);
+      if (result.error || !result.data) {
+        throw new Error(`Failed to update investor: ${result.error?.message ?? "Unknown error"}`);
+      }
+      data = result.data as Record<string, any>;
     }
 
     await this.mirrorInvestorWrite(data as Record<string, unknown>);
@@ -979,6 +1129,63 @@ export class CertificatesService {
         input.investmentType ?? undefined,
       );
     const initialStatus: CertificateStatus = "pending_manager";
+
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
+      const now = new Date().toISOString();
+      const record: CertificateRecord = {
+        id: randomUUID(),
+        investor_id: input.investorId ?? null,
+        investor_name: input.investorName,
+        investor_email: input.investorEmail,
+        investor_phone: input.investorPhone ?? null,
+        investor_reference_number: input.investorReferenceNumber ?? null,
+        amount: input.amount,
+        currency_code: input.currencyCode,
+        interest_rate: input.interestRate,
+        issue_date: issueDate,
+        investment_tenure: input.investmentTenure ?? null,
+        principal_maturity_date: input.principalMaturityDate ?? null,
+        interest_payment: interestPaymentDescription,
+        status: initialStatus,
+        manager_signature: null,
+        general_manager_signature: null,
+        ceo_signature: null,
+        certificate_url: null,
+        created_by: actor.id,
+        manager_reviewed_by: null,
+        general_manager_reviewed_by: null,
+        ceo_approved_by: null,
+        approved_at: null,
+        sent_at: null,
+        sent_by: null,
+        created_at: now,
+        updated_at: now,
+      };
+      await this.writeMongoWorkflowRecord("certificates", record as unknown as Record<string, unknown>);
+      await this.mirrorWorkflowRecordToSupabase("certificates", record as unknown as Record<string, unknown>);
+
+      const refreshedCertificate = await this.persistPdf(record, {
+        investorId: input.investorId,
+        investorReferenceNumber: input.investorReferenceNumber ?? null,
+      });
+      await this.notifyStageUsers(initialStatus, refreshedCertificate);
+      await insertAuditLog({
+        action: "certificate_created",
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        certificateId: refreshedCertificate.id,
+        targetEmail: refreshedCertificate.investor_email,
+        metadata: {
+          initialStatus,
+          investmentType: input.investmentType ?? null,
+          calculatedInterestPayment,
+          forceFullApprovalWorkflow: options.forceFullApprovalWorkflow === true,
+          writeAuthority: "mongo",
+        },
+      });
+      return refreshedCertificate;
+    }
 
     const { data, error } = await adminSupabase
       .from("certificates")
@@ -1312,27 +1519,17 @@ export class CertificatesService {
   private async listCertificateInboxRows(actor: AuthenticatedUser, scope: DashboardScope, limit?: number) {
     const statuses = this.getInboxStatuses(actor.role);
     if (statuses.length === 0) return [] as CertificateRecord[];
-
-    let query = adminSupabase
-      .from("certificates")
-      .select("*")
-      .in("status", statuses)
-      .order("created_at", { ascending: false });
-
-    if (actor.role === "admin" || actor.role === "super_admin") {
-      query = scope === "executive"
-        ? query.eq("created_by", actor.id)
-        : scope === "staff"
-          ? query.neq("created_by", actor.id)
-          : query;
-    }
-
-    if (limit !== undefined) query = query.limit(limit);
-
-    const { data, error } = await query;
-    if (error) throw new Error(`Failed to fetch certificate inbox: ${error.message}`);
-
-    return ((data ?? []) as CertificateRecord[]).filter((certificate) => {
+    const certificates = await this.readCertificatesForRead();
+    const filtered = certificates
+      .filter((certificate) => statuses.includes(certificate.status))
+      .filter((certificate) => {
+        if (actor.role === "admin" || actor.role === "super_admin") {
+          if (scope === "executive") return certificate.created_by === actor.id;
+          if (scope === "staff") return certificate.created_by !== actor.id;
+        }
+        return true;
+      })
+      .filter((certificate) => {
       if (isManagerEquivalentRole(actor.role)) {
         return certificate.status === "pending_manager" || certificate.status === "approved" || certificate.created_by === actor.id;
       }
@@ -1340,7 +1537,10 @@ export class CertificatesService {
         return certificate.status === "pending_general_manager" || certificate.created_by === actor.id;
       }
       return true;
-    });
+      })
+      .sort((left, right) => Date.parse(right.created_at ?? "") - Date.parse(left.created_at ?? ""));
+
+    return limit === undefined ? filtered : filtered.slice(0, limit);
   }
 
   private getInboxStatuses(role: AppRole): CertificateStatus[] {
@@ -1568,6 +1768,20 @@ export class CertificatesService {
       action_path: actionPath,
       is_read: false,
     };
+
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
+      await createNativeCertificateNotification({
+        certificateId: input.certificateId,
+        title: notification.title,
+        detail: notification.detail,
+        userRole: notification.user_role,
+        recipientUserId: notification.recipient_user_id ?? undefined,
+        recipientEmail: notification.recipient_email ?? undefined,
+        actionPath: notification.action_path,
+      });
+      return;
+    }
+
     const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
 
     if (error || !data) {
@@ -1606,6 +1820,22 @@ export class CertificatesService {
   }
 
   private async getUsersByRoles(roles: AppRole[]) {
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary certificate recipient lookups");
+    }
+    if (preferMongo) {
+      try {
+        const contacts = await listActiveStaffContactsByRoles(roles);
+        return contacts
+          .filter((contact) => contact.roles.some((role) => roles.includes(role as AppRole)))
+          .map((contact) => ({ id: contact.userId, email: contact.email ?? undefined, phone: contact.phone ?? undefined }));
+      } catch (error) {
+        throw new Error(`Failed to resolve certificate recipients from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     const { data, error } = await adminSupabase
       .from("user_roles")
       .select("user_id")
@@ -1638,6 +1868,23 @@ export class CertificatesService {
 
   private async getRoleForUser(userId?: string | null): Promise<AppRole | null> {
     if (!userId) {
+      return null;
+    }
+
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary staff role lookups");
+    }
+    if (preferMongo) {
+      try {
+        const entry = await getStaffDirectoryEntryFromMongo(userId);
+        const role = entry?.roles[0];
+        if (role) return role as AppRole;
+      } catch (error) {
+        throw new Error(`Failed to resolve staff role from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
       return null;
     }
 
@@ -1751,26 +1998,45 @@ export class CertificatesService {
       investorReferenceNumber?: number | null;
     },
   ) {
-    let query = adminSupabase
-      .from("investors")
-      .select("name, email, phone, reference_number, investment_amount, currency_code, percentage, tenure, maturity_date, investment_type");
-
     const investorId = investorContext?.investorId ?? certificate.investor_id ?? null;
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    let data: Record<string, any> | null = null;
 
-    if (investorId) {
-      query = query.eq("id", investorId);
-    } else {
-      query = query
-        .eq("email", certificate.investor_email)
-        .eq("name", certificate.investor_name)
-        .order("updated_at", { ascending: false })
-        .limit(1);
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary investor snapshot reads");
+    }
+    if (preferMongo) {
+      try {
+        if (investorId) {
+          data = await getWorkflowRecordFromMongo("investors", investorId) as Record<string, any> | null;
+        } else {
+          const investors = await listWorkflowRecordsFromMongo("investors") as Array<Record<string, any>>;
+          data = investors
+            .filter((investor) => investor.email === certificate.investor_email && investor.name === certificate.investor_name)
+            .sort((left, right) => Date.parse(String(right.updated_at ?? "")) - Date.parse(String(left.updated_at ?? "")))[0] ?? null;
+        }
+      } catch (error) {
+        throw new Error(`Failed to fetch investor snapshot from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
-    const { data, error } = await query.maybeSingle();
-
-    if (error) {
-      throw new Error(`Failed to fetch investor details: ${error.message}`);
+    if (!data) {
+      let query = adminSupabase
+        .from("investors")
+        .select("name, email, phone, reference_number, investment_amount, currency_code, percentage, tenure, maturity_date, investment_type");
+      if (investorId) {
+        query = query.eq("id", investorId);
+      } else {
+        query = query
+          .eq("email", certificate.investor_email)
+          .eq("name", certificate.investor_name)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+      }
+      const result = await query.maybeSingle();
+      if (result.error) throw new Error(`Failed to fetch investor details: ${result.error.message}`);
+      data = result.data as Record<string, any> | null;
     }
 
     const amount = Number(data?.investment_amount ?? certificate.amount);
@@ -1805,6 +2071,39 @@ export class CertificatesService {
   }
 
   private async getInvestorById(investorId: string) {
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary investor reads");
+    }
+    if (preferMongo) {
+      try {
+        const record = await getWorkflowRecordFromMongo("investors", investorId);
+        if (record) return record as {
+          id: string;
+          name: string;
+          email: string;
+          phone: string | null;
+          created_by: string | null;
+          reference_number: number | null;
+          investment_amount: number;
+          currency_code: string | null;
+          percentage: number;
+          start_date: string;
+          tenure: number | null;
+          maturity_date: string | null;
+          investment_type: "Upfront" | "Monthly" | "Quarterly" | "At Maturity" | null;
+          client_account_number: string;
+          client_bank: string;
+          expected_maturity_amount: number;
+        };
+      } catch (error) {
+        throw new Error(`Failed to fetch investor from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      throw new Error(`Investor not found in MongoDB: ${investorId}`);
+    }
+
     const { data, error } = await adminSupabase
       .from("investors")
       .select("*")
@@ -1836,58 +2135,25 @@ export class CertificatesService {
   }
 
   private async getLatestCertificateForInvestorById(investorId: string, investorEmail: string, investorName: string) {
-    const { data: byId } = await adminSupabase
-      .from("certificates")
-      .select("*")
-      .eq("investor_id", investorId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<CertificateRecord>();
-
-    if (byId) {
-      return byId;
-    }
-
-    const { data: byContact } = await adminSupabase
-      .from("certificates")
-      .select("*")
-      .eq("investor_email", investorEmail.trim().toLowerCase())
-      .eq("investor_name", investorName)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<CertificateRecord>();
-
-    return byContact ?? null;
+    const certificates = await this.readCertificatesForRead();
+    const normalizedEmail = investorEmail.trim().toLowerCase();
+    const matches = certificates.filter((certificate) => (
+      certificate.investor_id === investorId
+      || (certificate.investor_email?.trim().toLowerCase() === normalizedEmail && certificate.investor_name === investorName)
+    ));
+    return matches.sort((left, right) => Date.parse(right.created_at ?? "") - Date.parse(left.created_at ?? ""))[0] ?? null;
   }
 
   private async getCertificatesForInvestor(investorId: string, investorEmail: string, investorName: string) {
     const normalizedEmail = investorEmail.trim().toLowerCase();
-    const [byIdResult, byContactResult] = await Promise.all([
-      adminSupabase
-        .from("certificates")
-        .select("*")
-        .eq("investor_id", investorId)
-        .order("created_at", { ascending: false }),
-      adminSupabase
-        .from("certificates")
-        .select("*")
-        .eq("investor_email", normalizedEmail)
-        .eq("investor_name", investorName)
-        .order("created_at", { ascending: false }),
-    ]);
-
-    if (byIdResult.error) {
-      throw new Error(`Failed to fetch certificates for investor deletion: ${byIdResult.error.message}`);
-    }
-
-    if (byContactResult.error) {
-      throw new Error(`Failed to fetch certificates for investor deletion: ${byContactResult.error.message}`);
-    }
-
-    const merged = [...(byIdResult.data ?? []), ...(byContactResult.data ?? [])];
     const uniqueCertificates = new Map<string, CertificateRecord>();
-    merged.forEach((certificate) => {
-      uniqueCertificates.set(certificate.id, certificate as CertificateRecord);
+    (await this.readCertificatesForRead())
+      .filter((certificate) => (
+        certificate.investor_id === investorId
+        || (certificate.investor_email?.trim().toLowerCase() === normalizedEmail && certificate.investor_name === investorName)
+      ))
+      .forEach((certificate) => {
+        uniqueCertificates.set(certificate.id, certificate);
     });
 
     return [...uniqueCertificates.values()];
@@ -1978,6 +2244,10 @@ export class CertificatesService {
     }
 
     if (!/^https?:\/\//i.test(trimmed)) {
+      if (/^s3:\/\//i.test(trimmed)) {
+        const parsed = new URL(trimmed);
+        return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+      }
       return trimmed.replace(/^\/+/, "");
     }
 
@@ -1996,6 +2266,29 @@ export class CertificatesService {
           return decodeURIComponent(parsed.pathname.slice(index + marker.length));
         }
       }
+
+      if (env.S3_BUCKET) {
+        const host = parsed.hostname.toLowerCase();
+        const bucket = env.S3_BUCKET.toLowerCase();
+        const isVirtualHostedS3 = host === `${bucket}.s3.amazonaws.com`
+          || host.startsWith(`${bucket}.s3.`)
+          || host === `${bucket}.s3-accelerate.amazonaws.com`;
+        const isPathStyleS3 = host === "s3.amazonaws.com"
+          || host.startsWith("s3.")
+          || host === "s3-accelerate.amazonaws.com";
+
+        if (isVirtualHostedS3) {
+          return decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+        }
+
+        if (isPathStyleS3) {
+          const path = parsed.pathname.replace(/^\/+/, "");
+          const bucketPrefix = `${env.S3_BUCKET}/`;
+          if (path.startsWith(bucketPrefix)) {
+            return decodeURIComponent(path.slice(bucketPrefix.length));
+          }
+        }
+      }
     } catch {
       return null;
     }
@@ -2012,6 +2305,9 @@ export class CertificatesService {
     try {
       const parsed = new URL(normalized);
       const isStorageAsset = parsed.pathname.includes('/storage/v1/object/');
+      if (isS3StorageEnabled() && this.extractStoragePath(normalized)) {
+        return null;
+      }
       return isStorageAsset ? normalized : null;
     } catch {
       return null;
@@ -2027,6 +2323,23 @@ export class CertificatesService {
   }
 
   private async getDisplayNameForRole(role: AppRole, fallback: string) {
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary signatory lookups");
+    }
+    if (preferMongo) {
+      try {
+        const staffDirectory = await listStaffDirectoryFromMongo();
+        const staffMember = staffDirectory.find((entry) => entry.roles.includes(role));
+        if (staffMember?.fullName?.trim()) return staffMember.fullName.trim();
+      } catch (error) {
+        throw new Error(`Failed to resolve signatory from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      return fallback;
+    }
+
     const { data, error } = await adminSupabase
       .from("user_roles")
       .select("user_id")
@@ -2053,6 +2366,22 @@ export class CertificatesService {
   }
 
   private async getCertificate(certificateId: string) {
+    const preferMongo = env.CERTIFICATES_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary certificate reads");
+    }
+    if (preferMongo) {
+      try {
+        const record = await getWorkflowRecordFromMongo("certificates", certificateId);
+        if (record) return record as unknown as CertificateRecord;
+      } catch (error) {
+        throw new Error(`Failed to fetch certificate from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      throw new Error(`Certificate not found in MongoDB: ${certificateId}`);
+    }
+
     const { data, error } = await adminSupabase
       .from("certificates")
       .select("*")
@@ -2067,6 +2396,29 @@ export class CertificatesService {
   }
 
   private async getInvestorActionPath(certificate: CertificateRecord) {
+    const preferMongo = env.WORKFLOW_DATA_MONGO_READ_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase";
+    if (preferMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary investor action paths");
+    }
+    if (preferMongo) {
+      try {
+        if (certificate.investor_id) {
+          const investor = await getWorkflowRecordFromMongo("investors", certificate.investor_id);
+          if (investor?.id) return `/investors/${investor.id}`;
+        }
+        const investors = await listWorkflowRecordsFromMongo("investors") as Array<Record<string, unknown>>;
+        const investor = investors
+          .filter((record) => String(record.email ?? "").toLowerCase() === certificate.investor_email.trim().toLowerCase())
+          .sort((left, right) => Date.parse(String(right.updated_at ?? "")) - Date.parse(String(left.updated_at ?? "")))[0];
+        if (investor?.id) return `/investors/${investor.id}`;
+      } catch (error) {
+        throw new Error(`Failed to resolve investor action path from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      return null;
+    }
+
     if (certificate.investor_id) {
       const { data: investorById, error: investorByIdError } = await adminSupabase
         .from("investors")
@@ -2109,6 +2461,23 @@ export class CertificatesService {
   ) {
     const { investor_reference_number: _ignoredInvestorReferenceNumber, ...sanitizedUpdates } = updates;
 
+    if (env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
+      const current = await getWorkflowRecordFromMongo("certificates", certificateId);
+      if (!current) {
+        throw new Error(`Certificate not found in MongoDB: ${certificateId}`);
+      }
+
+      const record = {
+        ...current,
+        ...sanitizedUpdates,
+        id: certificateId,
+        updated_at: new Date().toISOString(),
+      };
+      await this.writeMongoWorkflowRecord("certificates", record);
+      await this.mirrorWorkflowRecordToSupabase("certificates", record);
+      return record as unknown as CertificateRecord;
+    }
+
     const { data, error } = await adminSupabase
       .from("certificates")
       .update(sanitizedUpdates)
@@ -2138,5 +2507,38 @@ export class CertificatesService {
       return;
     }
     mirrorWorkflowRecordsToMongoSafely(input);
+  }
+
+  private async writeMongoWorkflowRecord(
+    table: "investors" | "certificates",
+    record: Record<string, unknown>,
+  ) {
+    if (!isMongoConfigured()) {
+      throw new Error(`MongoDB is required while WORKFLOW_DATA_MONGO_WRITE_MODE=mongo for ${table}`);
+    }
+
+    const mirrored = await mirrorWorkflowRecordsToMongo({ table, records: [record] });
+    if (mirrored !== 1) {
+      throw new Error(`Failed to write ${table} record to MongoDB`);
+    }
+  }
+
+  private async mirrorWorkflowRecordToSupabase(
+    table: "investors" | "certificates",
+    record: Record<string, unknown>,
+  ) {
+    const compatibleRecord = Object.fromEntries(
+      Object.entries(record).filter(([, value]) => value !== undefined),
+    );
+    const { error } = await adminSupabase
+      .from(table)
+      .upsert(compatibleRecord, { onConflict: "id" });
+
+    if (error) {
+      console.warn(`[workflow-data.mongo] MongoDB write succeeded but Supabase compatibility mirror failed for ${table}`, {
+        recordId: record.id,
+        reason: error.message,
+      });
+    }
   }
 }

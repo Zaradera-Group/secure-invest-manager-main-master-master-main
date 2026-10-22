@@ -115,6 +115,29 @@ app.get("/health/migration", async (request, response) => {
 
   const auth0Configured = Boolean(env.AUTH0_ISSUER_BASE_URL && env.AUTH0_AUDIENCE);
   const ready = mongo.healthy && (env.AUTH_MODE === "supabase" || auth0Configured);
+  const cutoverBlockers: string[] = [];
+  const auth0ModeReady = env.AUTH_MODE === "dual" || env.AUTH_MODE === "auth0";
+  const allNotificationAuthoritiesAreRender = [
+    env.BIRTHDAY_DELIVERY_AUTHORITY,
+    env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY,
+    env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY,
+    env.MATURITY_REMINDER_DELIVERY_AUTHORITY,
+    env.PAYMENT_REMINDER_DELIVERY_AUTHORITY,
+    env.MONTHLY_REPORT_DELIVERY_AUTHORITY,
+  ].every((authority) => authority === "render");
+
+  if (!mongo.healthy) cutoverBlockers.push("MongoDB is not healthy");
+  if (!env.AUTH0_WORKFLOW_ACCESS_ENABLED) cutoverBlockers.push("Auth0 workflow access is disabled");
+  if (!auth0ModeReady) cutoverBlockers.push(`AUTH_MODE=${env.AUTH_MODE}; expected dual or auth0`);
+  if (!auth0Configured) cutoverBlockers.push("Auth0 issuer and audience are not configured");
+  if (!["dual", "mongo"].includes(env.WORKFLOW_DATA_MONGO_WRITE_MODE)) cutoverBlockers.push("Workflow writes are not Mongo-authoritative");
+  if (env.PUBLIC_INTAKE_WRITE_MODE !== "mongo") cutoverBlockers.push("Public intake writes are not Mongo-authoritative");
+  if (env.STAFF_DIRECTORY_MONGO_READ_MODE !== "mongo" || env.STAFF_DIRECTORY_MONGO_WRITE_MODE !== "mongo") cutoverBlockers.push("Staff directory is not Mongo-authoritative");
+  if (env.NOTIFICATION_PREFERENCES_DATA_SOURCE !== "mongo" || env.NOTIFICATION_PREFERENCES_WRITE_MODE !== "mongo") cutoverBlockers.push("Notification preferences are not Mongo-authoritative");
+  if (env.NOTIFICATIONS_DATA_SOURCE !== "mongo" || env.NOTIFICATIONS_WRITE_MODE !== "mongo") cutoverBlockers.push("Notifications are not Mongo-authoritative");
+  if (env.ANNOUNCEMENTS_DATA_SOURCE !== "mongo" || env.ANNOUNCEMENTS_WRITE_MODE !== "mongo") cutoverBlockers.push("Announcements are not Mongo-authoritative");
+  if (env.STORAGE_PROVIDER !== "s3" || env.STORAGE_S3_READ_FALLBACK_TO_SUPABASE) cutoverBlockers.push("S3 is not the exclusive storage read authority");
+  if (!env.NOTIFICATION_RENDER_WORKER_ENABLED || !allNotificationAuthoritiesAreRender) cutoverBlockers.push("Render is not the sole notification delivery authority");
 
   response.status(ready ? 200 : 503).json({
     status: ready ? "ready" : "degraded",
@@ -146,6 +169,10 @@ app.get("/health/migration", async (request, response) => {
       deliveryAuthority: "supabase-edge",
     },
     storage: { provider: env.STORAGE_PROVIDER },
+    cutover: {
+      ready: cutoverBlockers.length === 0,
+      blockers: cutoverBlockers,
+    },
   });
 });
 

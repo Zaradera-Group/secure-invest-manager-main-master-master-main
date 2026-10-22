@@ -1,6 +1,10 @@
 import { adminSupabase } from "../lib/supabase.js";
 import { env } from "../config/env.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
+import { runBirthdaySmsJob } from "../jobs/birthday-sms.job.js";
+import { produceMongoMaturityReminderDeliveries } from "./mongo-maturity-reminder-producer.service.js";
+import { produceMongoMonthlyReportDeliveries } from "./mongo-monthly-report-producer.service.js";
+import { produceMongoPaymentReminderDeliveries } from "./mongo-payment-reminder-producer.service.js";
 import { z } from "zod";
 import type { AppRole, AuthenticatedUser } from "../types/certificates.js";
 import {
@@ -24,6 +28,11 @@ import {
   listNotificationAuditRecordsFromMongo,
   type NotificationAuditTable,
 } from "../repositories/notification-audit.mongo.js";
+import {
+  cancelNotificationDeliveries,
+  requeueNotificationDeliveries,
+} from "../repositories/notification-delivery-outbox.mongo.js";
+import { runNotificationRenderWorker } from "../jobs/notification-render-worker.job.js";
 
 type WorkflowNotificationRole = "manager" | "general_manager" | "ceo" | "investor";
 type DashboardNotificationRecord = {
@@ -100,6 +109,42 @@ export class NotificationsService {
   async executeAdminAction(payload: unknown) {
     const input = notificationAdminActionSchema.parse(payload);
     const now = new Date().toISOString();
+
+    if (env.NOTIFICATION_RENDER_WORKER_ENABLED && isMongoConfigured()) {
+      if (input.action === "retry_failed_jobs") {
+        const affectedJobs = await requeueNotificationDeliveries({ now: new Date(now) });
+        return { message: `Requeued failed MongoDB deliveries: ${affectedJobs}`, affectedJobs };
+      }
+
+      if (input.action === "retry_single_job") {
+        if (!input.jobId) throw new Error("jobId is required");
+        const affectedJobs = await requeueNotificationDeliveries({ ids: [input.jobId], now: new Date(now) });
+        return { message: `Requeued MongoDB delivery ${input.jobId}: ${affectedJobs}`, affectedJobs };
+      }
+
+      if (input.action === "retry_selected_jobs") {
+        if (!input.jobIds?.length) throw new Error("jobIds is required");
+        const affectedJobs = await requeueNotificationDeliveries({ ids: input.jobIds, now: new Date(now) });
+        return { message: `Requeued selected MongoDB deliveries: ${affectedJobs}`, affectedJobs };
+      }
+
+      if (input.action === "cancel_single_job") {
+        if (!input.jobId) throw new Error("jobId is required");
+        const affectedJobs = await cancelNotificationDeliveries({ ids: [input.jobId], now: new Date(now) });
+        return { message: `Cancelled MongoDB delivery ${input.jobId}: ${affectedJobs}`, affectedJobs };
+      }
+
+      if (input.action === "cancel_selected_jobs") {
+        if (!input.jobIds?.length) throw new Error("jobIds is required");
+        const affectedJobs = await cancelNotificationDeliveries({ ids: input.jobIds, now: new Date(now) });
+        return { message: `Cancelled selected MongoDB deliveries: ${affectedJobs}`, affectedJobs };
+      }
+
+      if (input.action === "process_queue_now") {
+        await runNotificationRenderWorker();
+        return { message: "MongoDB notification delivery worker processed the queue" };
+      }
+    }
 
     if (input.action === "retry_failed_jobs") {
       const result = await adminSupabase
@@ -179,10 +224,18 @@ export class NotificationsService {
 
     if (input.action === "queue_reminders_now") {
       const [payment, maturity, birthday, monthly] = await Promise.all([
-        this.invokeNotificationRpc("enqueue_payment_reminder_jobs"),
-        this.invokeNotificationRpc("enqueue_maturity_reminder_jobs"),
-        this.invokeNotificationRpc("enqueue_birthday_notification_jobs"),
-        this.invokeNotificationRpc("enqueue_monthly_report_jobs"),
+        env.PAYMENT_REMINDER_DELIVERY_AUTHORITY === "render"
+          ? this.queueMongoPaymentReminders()
+          : this.invokeNotificationRpc("enqueue_payment_reminder_jobs"),
+        env.MATURITY_REMINDER_DELIVERY_AUTHORITY === "render"
+          ? this.queueMongoMaturityReminders()
+          : this.invokeNotificationRpc("enqueue_maturity_reminder_jobs"),
+        env.BIRTHDAY_DELIVERY_AUTHORITY === "render"
+          ? this.queueMongoBirthdayReminders()
+          : this.invokeNotificationRpc("enqueue_birthday_notification_jobs"),
+        env.MONTHLY_REPORT_DELIVERY_AUTHORITY === "render"
+          ? this.queueMongoMonthlyReports()
+          : this.invokeNotificationRpc("enqueue_monthly_report_jobs"),
       ]);
 
       return {
@@ -195,15 +248,22 @@ export class NotificationsService {
   }
 
   async getNotificationPreferences(actor: AuthenticatedUser) {
-    const requiresMongo = env.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo";
+    const requiresMongo = env.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo"
+      || env.NOTIFICATION_PREFERENCES_WRITE_MODE === "mongo";
     const preferMongo = requiresMongo
       || env.NOTIFICATION_PREFERENCES_MONGO_READ_MODE === "mongo"
       || env.NOTIFICATION_PREFERENCES_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary notification preferences");
+    }
+    if (preferMongo) {
       try {
         const preferences = await getNotificationPreferencesFromMongo(actor.id);
         if (preferences) return preferences as NotificationPreferencesRecord;
       } catch (error) {
+        if (requiresMongo) {
+          throw new Error(`Failed to fetch notification preferences from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+        }
         console.warn("[notification-preferences.mongo] Read failed; falling back to Supabase", {
           userId: actor.id,
           reason: error instanceof Error ? error.message : String(error),
@@ -211,9 +271,7 @@ export class NotificationsService {
       }
     }
 
-    if (requiresMongo) {
-      throw new Error("MongoDB is required when NOTIFICATION_PREFERENCES_DATA_SOURCE=mongo");
-    }
+    if (requiresMongo) return null;
 
     const { data, error } = await adminSupabase
       .from("notification_preferences")
@@ -232,16 +290,20 @@ export class NotificationsService {
     const updates = notificationPreferencesSchema.parse(payload);
     const existing = await this.getNotificationPreferences(actor);
 
-    if (env.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo") {
+    const mongoPrimary = env.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo"
+      || env.NOTIFICATION_PREFERENCES_WRITE_MODE === "mongo";
+    if (mongoPrimary) {
       if (!isMongoConfigured()) {
-        throw new Error("MongoDB is required when NOTIFICATION_PREFERENCES_DATA_SOURCE=mongo");
+        throw new Error("MongoDB is required for Mongo-primary notification preferences");
       }
 
-      return upsertNotificationPreferencesInMongo(
+      const preferences = await upsertNotificationPreferencesInMongo(
         actor.id,
         updates,
         existing as MongoNotificationPreferences | null,
       );
+      await this.mirrorPreferencesToSupabase(preferences);
+      return preferences;
     }
 
     const { data, error } = await adminSupabase
@@ -278,21 +340,30 @@ export class NotificationsService {
   }
 
   async getDashboardNotifications(actor: AuthenticatedUser, limit: number) {
-    const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo";
+    const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo"
+      || env.NOTIFICATIONS_WRITE_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo";
     const preferMongo = requiresMongo
       || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo"
-      || env.NOTIFICATIONS_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+      || env.NOTIFICATIONS_WRITE_MODE === "dual"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary dashboard notifications");
+    }
+    if (preferMongo) {
       try {
         return await listDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor), limit);
       } catch (error) {
+        if (requiresMongo) {
+          throw new Error(`Failed to fetch dashboard notifications from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+        }
         console.warn("[notifications.mongo] MongoDB dashboard read failed; falling back to Supabase", {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    if (requiresMongo) throw new Error("MongoDB is required when NOTIFICATIONS_DATA_SOURCE=mongo");
+    if (requiresMongo) return [];
 
     const { data, error } = await adminSupabase
       .from("notifications")
@@ -309,21 +380,30 @@ export class NotificationsService {
   }
 
   async getUnreadDashboardNotificationCount(actor: AuthenticatedUser) {
-    const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo";
+    const requiresMongo = env.NOTIFICATIONS_DATA_SOURCE === "mongo"
+      || env.NOTIFICATIONS_WRITE_MODE === "mongo"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo";
     const preferMongo = requiresMongo
       || env.NOTIFICATIONS_MONGO_READ_MODE === "mongo"
-      || env.NOTIFICATIONS_WRITE_MODE === "dual";
-    if (preferMongo && isMongoConfigured()) {
+      || env.NOTIFICATIONS_WRITE_MODE === "dual"
+      || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary unread notification counts");
+    }
+    if (preferMongo) {
       try {
         return await countUnreadDashboardNotificationsFromMongo(this.getMongoNotificationReadFilter(actor));
       } catch (error) {
+        if (requiresMongo) {
+          throw new Error(`Failed to fetch unread notification count from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+        }
         console.warn("[notifications.mongo] MongoDB unread-count read failed; falling back to Supabase", {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    if (requiresMongo) throw new Error("MongoDB is required when NOTIFICATIONS_DATA_SOURCE=mongo");
+    if (requiresMongo) return 0;
 
     const { count, error } = await adminSupabase
       .from("notifications")
@@ -339,7 +419,7 @@ export class NotificationsService {
   }
 
   async markDashboardNotificationRead(actor: AuthenticatedUser, notificationId: string) {
-    if (env.NOTIFICATIONS_DATA_SOURCE === "mongo") {
+    if (env.NOTIFICATIONS_DATA_SOURCE === "mongo" || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
       const notification = await getDashboardNotificationFromMongo(notificationId) as DashboardNotificationRecord | null;
       if (!notification || !isVisibleToActor(notification, actor)) throw new Error("Notification not found");
       await markNotificationReadInMongo(notificationId, new Date().toISOString());
@@ -366,7 +446,7 @@ export class NotificationsService {
       throw new Error(`Failed to mark notification as read: ${updateError.message}`);
     }
 
-    if (env.NOTIFICATIONS_WRITE_MODE === "dual") {
+    if (env.NOTIFICATIONS_WRITE_MODE === "dual" || String(env.WORKFLOW_DATA_MONGO_WRITE_MODE) === "mongo") {
       if (!isMongoConfigured()) throw new Error("MongoDB is required while NOTIFICATIONS_WRITE_MODE=dual");
       await markNotificationReadInMongo(notificationId, readAt);
     } else {
@@ -376,7 +456,7 @@ export class NotificationsService {
 
   async markAllDashboardNotificationsRead(actor: AuthenticatedUser) {
     const readAt = new Date().toISOString();
-    if (env.NOTIFICATIONS_DATA_SOURCE === "mongo") {
+    if (env.NOTIFICATIONS_DATA_SOURCE === "mongo" || env.WORKFLOW_DATA_MONGO_WRITE_MODE === "mongo") {
       await markNotificationsReadInMongo(this.getMongoNotificationReadFilter(actor), readAt);
       return;
     }
@@ -391,7 +471,7 @@ export class NotificationsService {
       throw new Error(`Failed to mark notifications as read: ${error.message}`);
     }
 
-    if (env.NOTIFICATIONS_WRITE_MODE === "dual") {
+    if (env.NOTIFICATIONS_WRITE_MODE === "dual" || String(env.WORKFLOW_DATA_MONGO_WRITE_MODE) === "mongo") {
       if (!isMongoConfigured()) throw new Error("MongoDB is required while NOTIFICATIONS_WRITE_MODE=dual");
       await markNotificationsReadInMongo(this.getMongoNotificationReadFilter(actor), readAt);
     } else {
@@ -400,14 +480,16 @@ export class NotificationsService {
   }
 
   async getAuditRecords(table: NotificationAuditTable, orderColumn: string, page: number, pageSize: number) {
-    if (env.NOTIFICATION_AUDIT_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.NOTIFICATION_AUDIT_MONGO_READ_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary notification audit reads");
+    }
+
+    if (requiresMongo) {
       try {
         return await listNotificationAuditRecordsFromMongo(table, page, pageSize);
       } catch (error) {
-        console.warn("[notification-audit.mongo] Read failed; falling back to Supabase", {
-          table,
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch notification audit records from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -434,6 +516,31 @@ export class NotificationsService {
     }
 
     return `recipient_user_id.eq.${actor.id},user_role.eq.${notificationRole}`;
+  }
+
+  private async mirrorPreferencesToSupabase(preferences: MongoNotificationPreferences) {
+    const { error } = await adminSupabase
+      .from("notification_preferences")
+      .upsert(
+        {
+          id: preferences.id,
+          user_id: preferences.user_id,
+          email_enabled: preferences.email_enabled,
+          maturity_reminders: preferences.maturity_reminders,
+          payment_reminders: preferences.payment_reminders,
+          monthly_reports: preferences.monthly_reports,
+          birthday_notifications: preferences.birthday_notifications,
+          reminder_days_before: preferences.reminder_days_before,
+        },
+        { onConflict: "user_id" },
+      );
+
+    if (error) {
+      console.warn("[notification-preferences.mongo] Mongo write succeeded but Supabase compatibility mirror failed", {
+        userId: preferences.user_id,
+        reason: error.message,
+      });
+    }
   }
 
   private getMongoNotificationReadFilter(actor: AuthenticatedUser): NotificationReadFilter {
@@ -474,12 +581,50 @@ export class NotificationsService {
   }
 
   private async invokeNotificationRpc(functionName: string) {
+    if (this.allDeliveryAuthoritiesUseRender()) {
+      throw new Error("The legacy Supabase notification worker is retired while all delivery authorities use Render");
+    }
+
     const { data, error } = await adminSupabase.rpc(functionName);
     if (error) throw new Error(`Failed to queue notifications: ${error.message}`);
     return data ?? 0;
   }
 
+  private async queueMongoPaymentReminders() {
+    this.requireMongoReminderAuthority("payment reminders");
+    return produceMongoPaymentReminderDeliveries("live");
+  }
+
+  private async queueMongoMaturityReminders() {
+    this.requireMongoReminderAuthority("maturity reminders");
+    return produceMongoMaturityReminderDeliveries("live");
+  }
+
+  private async queueMongoBirthdayReminders() {
+    this.requireMongoReminderAuthority("birthday reminders");
+    if (env.SMS_ENABLED !== true) {
+      throw new Error("Twilio SMS delivery must be enabled for live birthday reminders");
+    }
+    await runBirthdaySmsJob();
+    return { queued: true, authority: "render" };
+  }
+
+  private async queueMongoMonthlyReports() {
+    this.requireMongoReminderAuthority("monthly reports");
+    return produceMongoMonthlyReportDeliveries("live");
+  }
+
+  private requireMongoReminderAuthority(workflow: string) {
+    if (!env.NOTIFICATION_RENDER_WORKER_ENABLED || !isMongoConfigured()) {
+      throw new Error(`MongoDB and the Render notification worker are required for live ${workflow}`);
+    }
+  }
+
   private async triggerExistingNotificationWorker(batchSize: number) {
+    if (this.allDeliveryAuthoritiesUseRender()) {
+      throw new Error("The legacy Supabase notification worker is retired while all delivery authorities use Render");
+    }
+
     const response = await fetch(`${env.SUPABASE_URL}/functions/v1/process-notification-jobs`, {
       method: "POST",
       headers: {
@@ -500,5 +645,16 @@ export class NotificationsService {
     } catch {
       return { message: "Notification queue processing triggered" };
     }
+  }
+
+  private allDeliveryAuthoritiesUseRender() {
+    return [
+      env.BIRTHDAY_DELIVERY_AUTHORITY,
+      env.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY,
+      env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY,
+      env.MATURITY_REMINDER_DELIVERY_AUTHORITY,
+      env.PAYMENT_REMINDER_DELIVERY_AUTHORITY,
+      env.MONTHLY_REPORT_DELIVERY_AUTHORITY,
+    ].every((authority) => authority === "render");
   }
 }

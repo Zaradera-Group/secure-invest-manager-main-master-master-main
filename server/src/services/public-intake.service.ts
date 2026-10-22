@@ -1,15 +1,19 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { adminSupabase } from "../lib/supabase.js";
 import { canSendEmail, sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
 import {
+  deletePublicIntakeRequestFromMongo,
   deletePublicIntakeRequestFromMongoSafely,
+  createPublicIntakeRequestInMongo,
   getPublicIntakeRequestFromMongo,
   listPublicIntakeRequestsFromMongo,
   mirrorPublicIntakeRequestToMongo,
   mirrorPublicIntakeRequestToMongoSafely,
+  updatePublicIntakeRequestInMongo,
 } from "../repositories/public-intake.mongo.js";
 import {
   consumePublicIntakeOtpInMongo,
@@ -19,8 +23,9 @@ import {
   type PublicIntakeOtpRecord,
 } from "../repositories/public-intake-otp.mongo.js";
 import { isMongoConfigured } from "../lib/mongodb.js";
+import { getStaffContactFromMongo, listActiveStaffContactsByRoles } from "../repositories/staff-contacts.mongo.js";
 import type { AuthenticatedUser } from "../types/certificates.js";
-import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import { createNativeDashboardNotification, mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
 import { enqueueNotificationDelivery } from "../repositories/notification-delivery-outbox.mongo.js";
 import {
   createOtpExpiryDate,
@@ -78,13 +83,16 @@ const intakeReviewSchema = z.object({
 });
 
 export async function listPublicIntakeRequests() {
-  if (env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+  const requiresMongo = env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo";
+  if (requiresMongo && !isMongoConfigured()) {
+    throw new Error("MongoDB is required for Mongo-primary public intake reads");
+  }
+
+  if (requiresMongo) {
     try {
       return await listPublicIntakeRequestsFromMongo();
     } catch (error) {
-      console.warn("[public-intake.mongo] MongoDB inbox read failed; falling back to Supabase", {
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      throw new Error(`Failed to fetch public intake requests from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -98,15 +106,19 @@ export async function listPublicIntakeRequests() {
 }
 
 export async function getPublicIntakeRequestForStaff(requestId: string) {
-  if (env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+  const requiresMongo = env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo";
+  if (requiresMongo && !isMongoConfigured()) {
+    throw new Error("MongoDB is required for Mongo-primary public intake reads");
+  }
+
+  if (requiresMongo) {
     try {
       const record = await getPublicIntakeRequestFromMongo(requestId);
       if (record) return record;
+      throw new Error("Public intake request not found");
     } catch (error) {
-      console.warn("[public-intake.mongo] MongoDB inbox detail read failed; falling back to Supabase", {
-        requestId,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      if (error instanceof Error && error.message === "Public intake request not found") throw error;
+      throw new Error(`Failed to fetch public intake request from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -123,6 +135,19 @@ export async function getPublicIntakeRequestForStaff(requestId: string) {
 
 export async function reviewPublicIntakeRequest(requestId: string, actor: AuthenticatedUser, input: unknown) {
   const review = intakeReviewSchema.parse(input);
+  if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+    const reviewedAt = new Date().toISOString();
+    const data = await updatePublicIntakeRequestInMongo({
+      requestId,
+      status: review.status,
+      reviewedAt,
+      reviewedBy: actor.id,
+      reviewNotes: review.reviewNotes?.trim() || null,
+    });
+    if (!data) throw new Error("Public intake request not found");
+    return data;
+  }
+
   const { data, error } = await adminSupabase
     .from("public_intake_requests")
     .update({
@@ -148,6 +173,12 @@ export async function reviewPublicIntakeRequest(requestId: string, actor: Authen
 }
 
 export async function deletePublicIntakeRequest(requestId: string) {
+  if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+    const deleted = await deletePublicIntakeRequestFromMongo(requestId);
+    if (!deleted) throw new Error("Public intake request not found");
+    return;
+  }
+
   const { error, count } = await adminSupabase
     .from("public_intake_requests")
     .delete({ count: "exact" })
@@ -215,25 +246,33 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
     submitted_user_agent: context.userAgent ?? null,
   };
 
-  const { data: requestRecord, error } = await adminSupabase
-    .from("public_intake_requests")
-    .insert(intakeRecord)
-    .select("*")
-    .single();
+  const submittedAt = new Date().toISOString();
+  const requestId = randomUUID();
+  let requestRecord: Record<string, unknown>;
+  if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+    requestRecord = await createPublicIntakeRequestInMongo({ requestId, intakeRecord, submittedAt });
+  } else {
+    const { data, error } = await adminSupabase
+      .from("public_intake_requests")
+      .insert(intakeRecord)
+      .select("*")
+      .single();
 
-  if (error || !requestRecord) {
-    throw new Error(`Failed to create public intake request: ${error?.message ?? "Unknown error"}`);
+    if (error || !data) {
+      throw new Error(`Failed to create public intake request: ${error?.message ?? "Unknown error"}`);
+    }
+    requestRecord = data as Record<string, unknown>;
   }
 
-  const requestId = requestRecord.id as string;
-  const submittedAt = new Date().toISOString();
   const mongoMirrorInput = {
     requestId,
     intakeRecord,
     requestRecord: requestRecord as Record<string, unknown>,
     submittedAt,
   };
-  mirrorPublicIntakeRequestToMongoSafely(mongoMirrorInput);
+  if (env.PUBLIC_INTAKE_WRITE_MODE !== "mongo") {
+    mirrorPublicIntakeRequestToMongoSafely(mongoMirrorInput);
+  }
 
   const notificationPayload = buildPublicIntakeNotificationPayload({
     investor: input,
@@ -258,17 +297,23 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
         action_path: "/public-intake-inbox",
         is_read: false,
       };
-      const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
-
-      if (error || !data) {
-        throw new Error(`Failed to create dashboard notification: ${error?.message ?? "Unknown error"}`);
+      if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+        await createNativeDashboardNotification({
+          dedupeKey: `public-intake:${requestId}:${recipient.role}:${recipient.email}`,
+          recipientUserId: recipient.userId ?? "",
+          recipientEmail: recipient.email,
+          userRole: recipient.role,
+          investorId: requestId,
+          title: notification.title,
+          detail: notification.detail,
+          actionPath: notification.action_path,
+        });
+        return;
       }
 
-      mirrorNotificationToMongoSafely({
-        notificationId: String(data.id),
-        notification: data as Record<string, unknown>,
-        createdAt: String(data.created_at ?? submittedAt),
-      });
+      const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
+      if (error || !data) throw new Error(`Failed to create dashboard notification: ${error?.message ?? "Unknown error"}`);
+      mirrorNotificationToMongoSafely({ notificationId: String(data.id), notification: data as Record<string, unknown>, createdAt: String(data.created_at ?? submittedAt) });
     }),
   );
 
@@ -280,7 +325,7 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
   if (env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY === "render") {
     try {
       // The worker renders from the mirrored record instead of duplicating sensitive form content in the outbox.
-      if (!env.PUBLIC_INTAKE_MONGO_MIRROR_ENABLED || !isMongoConfigured()) {
+      if ((env.PUBLIC_INTAKE_WRITE_MODE !== "mongo" && !env.PUBLIC_INTAKE_MONGO_MIRROR_ENABLED) || !isMongoConfigured()) {
         throw new Error("MongoDB public-intake mirroring is not available");
       }
       await mirrorPublicIntakeRequestToMongo(mongoMirrorInput);
@@ -600,6 +645,11 @@ async function resolveAssigneeEmail(assigneeUserId: string, fallbackEmail?: stri
     return fallbackEmail;
   }
 
+  if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo") {
+    if (!isMongoConfigured()) throw new Error("MongoDB is required for Mongo-primary staff directory reads");
+    return (await getStaffContactFromMongo(assigneeUserId))?.email?.trim() ?? null;
+  }
+
   const { data, error } = await adminSupabase.auth.admin.listUsers();
   if (error) {
     throw error;
@@ -619,6 +669,34 @@ async function resolveInternalRecipients(args: {
   assigneeEmail: string | null;
 }) {
   const recipients = new Map<string, InternalPublicIntakeRecipient>();
+
+  if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo") {
+    if (!isMongoConfigured()) throw new Error("MongoDB is required for Mongo-primary staff directory reads");
+    const contacts = await listActiveStaffContactsByRoles([
+      "investment_manager",
+      "accountant",
+      "general_manager",
+      "super_admin",
+    ]);
+    const assignee = contacts.find((contact) => contact.userId === args.assigneeUserId);
+    const assigneeEmail = args.assigneeEmail?.trim().toLowerCase() ?? assignee?.email?.trim().toLowerCase() ?? null;
+    if (assigneeEmail) {
+      recipients.set(`manager:${assigneeEmail}`, {
+        role: "manager",
+        userId: args.assigneeUserId,
+        email: assigneeEmail,
+      });
+    }
+
+    for (const contact of contacts) {
+      const email = contact.email?.trim().toLowerCase();
+      if (!email) continue;
+      const role = mapRecipientRoleFromRoles(contact.roles);
+      recipients.set(`${role}:${email}`, { role, userId: contact.userId, email });
+    }
+    return Array.from(recipients.values());
+  }
+
   const userLookup = await resolveUserLookup();
 
   const assigneeEmail = args.assigneeEmail?.trim().toLowerCase() ?? null;
@@ -689,6 +767,12 @@ function mapRecipientRole(role?: string | null): "manager" | "general_manager" |
     default:
       return "manager";
   }
+}
+
+function mapRecipientRoleFromRoles(roles: string[]): "manager" | "general_manager" | "ceo" {
+  if (roles.includes("super_admin")) return "ceo";
+  if (roles.includes("general_manager")) return "general_manager";
+  return "manager";
 }
 
 async function resolveUserLookup() {

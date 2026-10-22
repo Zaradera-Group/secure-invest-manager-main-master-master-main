@@ -55,6 +55,7 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
   const [role, setRole] = useState<AppRole | null>(null);
   const [accessIssue, setAccessIssue] = useState<string | null>(null);
   const [loadingIdentity, setLoadingIdentity] = useState(false);
+  const [session, setSession] = useState<AppAuthSession | null>(null);
   const user = useMemo(() => toAppUser(auth0User), [auth0User]);
   const emailVerified = Boolean(auth0User?.email_verified);
 
@@ -69,6 +70,7 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
   useEffect(() => {
     if (!isAuthenticated) {
       setBackendAccessTokenProvider(null);
+      setSession(null);
       return;
     }
 
@@ -82,6 +84,7 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
     const loadIdentity = async () => {
       if (!isAuthenticated || !user || !emailVerified) {
         if (!cancelled) {
+          setSession(null);
           setRole(null);
           setAccessIssue(isAuthenticated && !emailVerified
             ? 'Please verify your email address before accessing the dashboard.'
@@ -92,6 +95,7 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
 
       if (!AUTH_API_URL) {
         if (!cancelled) {
+          setSession(null);
           setRole(null);
           setAccessIssue('The authentication service URL is not configured.');
         }
@@ -115,11 +119,13 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
         }
 
         if (!cancelled) {
+          setSession({ access_token: token, user });
           setRole(nextRole);
           setAccessIssue(null);
         }
       } catch (error) {
         if (!cancelled) {
+          setSession(null);
           setRole(null);
           setAccessIssue(error instanceof Error ? error.message : 'Unable to validate your Auth0 access.');
         }
@@ -138,10 +144,14 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
 
   const ensureFreshSession = useCallback(async (): Promise<AppAuthSession | null> => {
     if (!isAuthenticated || !user) {
+      setSession(null);
       return null;
     }
 
-    return { access_token: await getToken(), user };
+    const accessToken = await getToken();
+    const nextSession = { access_token: accessToken, user };
+    setSession(nextSession);
+    return nextSession;
   }, [getToken, isAuthenticated, user]);
 
   const signIn = useCallback(async (_email: string, _password: string) => {
@@ -166,10 +176,6 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
     await logout({ logoutParams: { returnTo: `${globalThis.location.origin}/login` } });
   }, [logout]);
 
-  const session = useMemo<AppAuthSession | null>(
-    () => (isAuthenticated && user ? { access_token: 'auth0-browser-session', user } : null),
-    [isAuthenticated, user],
-  );
   const mfaRequired = isMfaRequired(role);
   // Auth0 issues the token only after its Post Login Action has completed the staff MFA challenge.
   const mfaVerified = Boolean(isAuthenticated && emailVerified && role);

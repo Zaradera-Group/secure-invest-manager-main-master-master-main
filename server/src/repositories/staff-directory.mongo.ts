@@ -63,6 +63,29 @@ export async function getStaffDirectoryEntryFromMongo(userId: string) {
   return collection.findOne({ userId }, { projection: { _id: 0 } });
 }
 
+export async function updateApprovalAvailabilityInMongo(input: {
+  userId: string;
+  role: string;
+  available: boolean;
+}) {
+  const collection = await getCollection();
+  const result = await collection.updateOne(
+    { userId: input.userId, roles: input.role },
+    {
+      $set: {
+        [`approvalAvailability.${input.role}`]: input.available,
+        mirroredAt: new Date().toISOString(),
+      },
+    },
+  );
+
+  if (result.matchedCount !== 1) {
+    throw new Error("Staff directory role assignment was not found in MongoDB");
+  }
+
+  return input.available;
+}
+
 export function mirrorApprovalAvailabilityToMongoSafely(input: {
   userId: string;
   role: string;

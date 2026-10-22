@@ -154,3 +154,55 @@ export async function getNotificationDeliveryOutboxCounts() {
   ] as const));
   return Object.fromEntries(entries) as Record<NotificationDeliveryStatus, number>;
 }
+
+export async function requeueNotificationDeliveries(input: {
+  ids?: string[];
+  now?: Date;
+}) {
+  const collection = await getCollection();
+  const now = input.now ?? new Date();
+  const filter: Filter<NotificationDeliveryOutboxRecord> = {
+    status: "failed",
+  };
+  if (input.ids?.length) filter.id = { $in: input.ids };
+
+  const result = await collection.updateMany(
+    filter,
+    {
+      $set: {
+        status: "pending",
+        scheduledAt: now.toISOString(),
+        lockedAt: null,
+        processedAt: null,
+        lastError: null,
+        updatedAt: now.toISOString(),
+      },
+    },
+  );
+  return result.modifiedCount;
+}
+
+export async function cancelNotificationDeliveries(input: {
+  ids?: string[];
+  now?: Date;
+}) {
+  const collection = await getCollection();
+  const now = input.now ?? new Date();
+  const filter: Filter<NotificationDeliveryOutboxRecord> = {
+    status: { $in: ["pending", "failed", "processing"] },
+  };
+  if (input.ids?.length) filter.id = { $in: input.ids };
+
+  const result = await collection.updateMany(
+    filter,
+    {
+      $set: {
+        status: "cancelled",
+        lockedAt: null,
+        processedAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    },
+  );
+  return result.modifiedCount;
+}

@@ -51,8 +51,13 @@ const parseAnnouncement = (input: unknown) => {
 
 export class AnnouncementsService {
   async list(page: number, pageSize: number) {
-    const requiresMongo = env.ANNOUNCEMENTS_DATA_SOURCE === "mongo";
-    if ((requiresMongo || env.ANNOUNCEMENTS_MONGO_READ_MODE === "mongo") && isMongoConfigured()) {
+    const requiresMongo = env.ANNOUNCEMENTS_DATA_SOURCE === "mongo"
+      || env.ANNOUNCEMENTS_WRITE_MODE === "mongo"
+      || env.ANNOUNCEMENTS_MONGO_READ_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary announcements");
+    }
+    if (requiresMongo) {
       try {
         const announcements = await listWorkflowRecordsFromMongo("announcements") as unknown as AnnouncementRecord[];
         const from = page * pageSize;
@@ -61,14 +66,8 @@ export class AnnouncementsService {
           count: announcements.length,
         };
       } catch (error) {
-        console.warn("[workflow-data.mongo] MongoDB announcement read failed; falling back to Supabase", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch announcements from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }
-
-    if (requiresMongo) {
-      throw new Error("MongoDB is required when ANNOUNCEMENTS_DATA_SOURCE=mongo");
     }
 
     const from = page * pageSize;
@@ -89,9 +88,11 @@ export class AnnouncementsService {
   async create(input: unknown) {
     const announcement = parseAnnouncement(input);
 
-    if (env.ANNOUNCEMENTS_DATA_SOURCE === "mongo") {
+    const mongoPrimary = env.ANNOUNCEMENTS_DATA_SOURCE === "mongo"
+      || env.ANNOUNCEMENTS_WRITE_MODE === "mongo";
+    if (mongoPrimary) {
       if (!isMongoConfigured()) {
-        throw new Error("MongoDB is required when ANNOUNCEMENTS_DATA_SOURCE=mongo");
+        throw new Error("MongoDB is required for Mongo-primary announcements");
       }
 
       const record: AnnouncementRecord = {
@@ -100,6 +101,7 @@ export class AnnouncementsService {
         created_at: new Date().toISOString(),
       };
       await mirrorWorkflowRecordsToMongo({ table: "announcements", records: [record] });
+      await this.mirrorAnnouncementToSupabase(record);
       return record;
     }
 
@@ -114,10 +116,14 @@ export class AnnouncementsService {
     }
 
     const record = data as AnnouncementRecord;
-    mirrorWorkflowRecordsToMongoSafely({
-      table: "announcements",
-      records: [record],
-    });
+    if (env.ANNOUNCEMENTS_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while ANNOUNCEMENTS_WRITE_MODE=dual");
+      }
+      await mirrorWorkflowRecordsToMongo({ table: "announcements", records: [record] });
+    } else {
+      mirrorWorkflowRecordsToMongoSafely({ table: "announcements", records: [record] });
+    }
 
     return record;
   }
@@ -127,12 +133,21 @@ export class AnnouncementsService {
       throw new AnnouncementValidationError("Announcement ID is required");
     }
 
-    if (env.ANNOUNCEMENTS_DATA_SOURCE === "mongo") {
+    const mongoPrimary = env.ANNOUNCEMENTS_DATA_SOURCE === "mongo"
+      || env.ANNOUNCEMENTS_WRITE_MODE === "mongo";
+    if (mongoPrimary) {
       if (!isMongoConfigured()) {
-        throw new Error("MongoDB is required when ANNOUNCEMENTS_DATA_SOURCE=mongo");
+        throw new Error("MongoDB is required for Mongo-primary announcements");
       }
 
       await deleteWorkflowRecordsFromMongo({ table: "announcements", supabaseIds: [id] });
+      const { error } = await adminSupabase.from("announcements").delete().eq("id", id);
+      if (error) {
+        console.warn("[workflow-data.mongo] Announcement deleted in MongoDB but Supabase compatibility cleanup failed", {
+          announcementId: id,
+          reason: error.message,
+        });
+      }
       return;
     }
 
@@ -141,9 +156,26 @@ export class AnnouncementsService {
       throw new Error(`Failed to delete announcement: ${error.message}`);
     }
 
-    deleteWorkflowRecordsFromMongoSafely({
-      table: "announcements",
-      supabaseIds: [id],
-    });
+    if (env.ANNOUNCEMENTS_WRITE_MODE === "dual") {
+      if (!isMongoConfigured()) {
+        throw new Error("MongoDB is required while ANNOUNCEMENTS_WRITE_MODE=dual");
+      }
+      await deleteWorkflowRecordsFromMongo({ table: "announcements", supabaseIds: [id] });
+    } else {
+      deleteWorkflowRecordsFromMongoSafely({ table: "announcements", supabaseIds: [id] });
+    }
+  }
+
+  private async mirrorAnnouncementToSupabase(record: AnnouncementRecord) {
+    const { error } = await adminSupabase
+      .from("announcements")
+      .upsert(record, { onConflict: "id" });
+
+    if (error) {
+      console.warn("[workflow-data.mongo] Announcement written to MongoDB but Supabase compatibility mirror failed", {
+        announcementId: record.id,
+        reason: error.message,
+      });
+    }
   }
 }

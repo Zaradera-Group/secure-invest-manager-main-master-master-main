@@ -85,7 +85,11 @@ export async function uploadObject({ path, bytes, contentType, supabaseBucket, u
   return storagePath;
 }
 
-export async function createSignedObjectUrl(path: string, expiresInSeconds = env.S3_SIGNED_URL_EXPIRES_SECONDS) {
+export async function createSignedObjectUrl(
+  path: string,
+  expiresInSeconds = env.S3_SIGNED_URL_EXPIRES_SECONDS,
+  supabaseBucket = env.CERTIFICATE_STORAGE_BUCKET,
+) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
@@ -101,16 +105,16 @@ export async function createSignedObjectUrl(path: string, expiresInSeconds = env
       );
     } catch (error) {
       if (!shouldUseSupabaseReadFallback(error)) throw error;
-      return createSupabaseSignedObjectUrl(normalizeStoragePath(path), expiresInSeconds);
+      return createSupabaseSignedObjectUrl(normalizeStoragePath(path), expiresInSeconds, supabaseBucket);
     }
   }
 
-  return createSupabaseSignedObjectUrl(storagePath, expiresInSeconds);
+  return createSupabaseSignedObjectUrl(storagePath, expiresInSeconds, supabaseBucket);
 }
 
-async function createSupabaseSignedObjectUrl(path: string, expiresInSeconds: number) {
+async function createSupabaseSignedObjectUrl(path: string, expiresInSeconds: number, bucket: string) {
   const { data, error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
+    .from(bucket)
     .createSignedUrl(path, expiresInSeconds);
 
   if (error || !data?.signedUrl) {
@@ -120,7 +124,7 @@ async function createSupabaseSignedObjectUrl(path: string, expiresInSeconds: num
   return data.signedUrl;
 }
 
-export async function downloadObject(path: string) {
+export async function downloadObject(path: string, supabaseBucket = env.CERTIFICATE_STORAGE_BUCKET) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
@@ -136,16 +140,16 @@ export async function downloadObject(path: string) {
       return Buffer.from(await response.Body.transformToByteArray());
     } catch (error) {
       if (!shouldUseSupabaseReadFallback(error)) throw error;
-      return downloadSupabaseObject(normalizeStoragePath(path));
+      return downloadSupabaseObject(normalizeStoragePath(path), supabaseBucket);
     }
   }
 
-  return downloadSupabaseObject(storagePath);
+  return downloadSupabaseObject(storagePath, supabaseBucket);
 }
 
-async function downloadSupabaseObject(path: string) {
+async function downloadSupabaseObject(path: string, bucket: string) {
   const { data, error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
+    .from(bucket)
     .download(path);
 
   if (error || !data) {
@@ -166,7 +170,7 @@ function shouldUseSupabaseReadFallback(error: unknown) {
     || candidate.$metadata?.httpStatusCode === 404;
 }
 
-export async function deleteObject(path: string) {
+export async function deleteObject(path: string, supabaseBucket = env.CERTIFICATE_STORAGE_BUCKET) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
@@ -180,7 +184,7 @@ export async function deleteObject(path: string) {
   }
 
   const { error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
+    .from(supabaseBucket)
     .remove([storagePath]);
 
   if (error) {

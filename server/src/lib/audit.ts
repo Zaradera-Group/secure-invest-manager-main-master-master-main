@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import {
   mirrorSecurityAuditRecordsToMongo,
   mirrorSecurityAuditRecordToMongoSafely,
+  insertSecurityAuditRecordInMongo,
   type SecurityAuditRecord,
 } from "../repositories/security-audit.mongo.js";
 
@@ -25,6 +26,32 @@ export const insertAuditLog = async (input: {
   targetEmail?: string | null;
   metadata?: Record<string, unknown>;
 }) => {
+  if (env.SECURITY_AUDIT_MONGO_WRITE_MODE === "mongo") {
+    if (!env.MONGODB_URI || !env.MONGODB_DB_NAME) {
+      throw new Error("MongoDB is required while SECURITY_AUDIT_MONGO_WRITE_MODE=mongo");
+    }
+
+    const record = await insertSecurityAuditRecordInMongo({
+      action: input.action,
+      actor_user_id: input.actorUserId ?? null,
+      actor_email: input.actorEmail ?? null,
+      actor_role: input.actorRole ?? null,
+      certificate_id: input.certificateId ?? null,
+      target_email: input.targetEmail ?? null,
+      metadata: input.metadata ?? {},
+      created_at: new Date().toISOString(),
+    });
+
+    const { error } = await adminSupabase.from("security_audit_logs").upsert(record, { onConflict: "id" });
+    if (error) {
+      console.warn("[security-audit.mongo] Mongo write succeeded but Supabase compatibility mirror failed", {
+        auditId: record.id,
+        reason: error.message,
+      });
+    }
+    return;
+  }
+
   const { data, error } = await adminSupabase
     .from("security_audit_logs")
     .insert({

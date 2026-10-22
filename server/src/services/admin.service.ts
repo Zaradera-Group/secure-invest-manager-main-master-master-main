@@ -18,7 +18,12 @@ const formatRoleLabel = (role: string | null | undefined) => {
 
 export class AdminService {
   async getCreatorDirectory() {
-    if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary staff directory reads");
+    }
+
+    if (requiresMongo) {
       try {
         const staffDirectory = await listStaffDirectoryFromMongo();
         return staffDirectory.flatMap((staffMember) => staffMember.roles.map((role) => {
@@ -30,9 +35,7 @@ export class AdminService {
           };
         }));
       } catch (error) {
-        console.warn("[staff-directory.mongo] Staff directory read failed; falling back to Supabase", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch staff directory from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -57,7 +60,12 @@ export class AdminService {
   }
 
   async getRoleCounts() {
-    if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary staff role counts");
+    }
+
+    if (requiresMongo) {
       try {
         const staffDirectory = await listStaffDirectoryFromMongo();
         return staffDirectory.reduce<Record<string, number>>((counts, staffMember) => {
@@ -67,9 +75,7 @@ export class AdminService {
           return counts;
         }, {});
       } catch (error) {
-        console.warn("[staff-directory.mongo] Staff role count read failed; falling back to Supabase", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch staff role counts from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -83,13 +89,16 @@ export class AdminService {
   }
 
   async getRecentInvestorActivity(limit: number) {
-    if (env.AUDIT_LOGS_MONGO_READ_MODE === "mongo" && isMongoConfigured()) {
+    const requiresMongo = env.AUDIT_LOGS_MONGO_READ_MODE === "mongo";
+    if (requiresMongo && !isMongoConfigured()) {
+      throw new Error("MongoDB is required for Mongo-primary audit-log reads");
+    }
+
+    if (requiresMongo) {
       try {
         return await listRecentInvestorActivityFromMongo(limit);
       } catch (error) {
-        console.warn("[audit-logs.mongo] Investor activity read failed; falling back to Supabase", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        throw new Error(`Failed to fetch investor activity from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 

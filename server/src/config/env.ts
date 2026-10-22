@@ -112,6 +112,7 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   PUBLIC_INTAKE_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
+  PUBLIC_INTAKE_WRITE_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   PUBLIC_INTAKE_OTP_STORAGE_MODE: z.enum(["supabase", "mongo"]).default("mongo"),
   NOTIFICATIONS_MONGO_MIRROR_ENABLED: z
     .union([z.string(), z.boolean()])
@@ -120,11 +121,11 @@ const envSchema = z.object({
   NOTIFICATIONS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   // Mongo-primary notification state is limited to dashboard reads and read acknowledgements.
   NOTIFICATIONS_DATA_SOURCE: z.enum(["supabase", "mongo"]).default("supabase"),
-  NOTIFICATIONS_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
+  NOTIFICATIONS_WRITE_MODE: z.enum(["supabase", "dual", "mongo"]).default("supabase"),
   NOTIFICATION_PREFERENCES_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   // Keep Supabase authoritative until every reminder producer reads MongoDB preferences.
   NOTIFICATION_PREFERENCES_DATA_SOURCE: z.enum(["supabase", "mongo"]).default("supabase"),
-  NOTIFICATION_PREFERENCES_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
+  NOTIFICATION_PREFERENCES_WRITE_MODE: z.enum(["supabase", "dual", "mongo"]).default("supabase"),
   NOTIFICATION_AUDIT_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   NOTIFICATION_AUDIT_MONGO_RECONCILIATION_ENABLED: z
     .union([z.string(), z.boolean()])
@@ -179,7 +180,7 @@ const envSchema = z.object({
     .union([z.string(), z.boolean()])
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
-  SECURITY_AUDIT_MONGO_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
+  SECURITY_AUDIT_MONGO_WRITE_MODE: z.enum(["supabase", "dual", "mongo"]).default("supabase"),
   AUDIT_LOGS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   AUDIT_LOGS_MONGO_RECONCILIATION_ENABLED: z
     .union([z.string(), z.boolean()])
@@ -192,12 +193,14 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === undefined ? true : value === true || value === "true")),
   // Supabase remains authoritative in supabase mode. Dual mode makes Mongo mirroring synchronous and failure-visible.
-  WORKFLOW_DATA_MONGO_WRITE_MODE: z.enum(["supabase", "dual"]).default("supabase"),
+  WORKFLOW_DATA_MONGO_WRITE_MODE: z.enum(["supabase", "dual", "mongo"]).default("supabase"),
   WORKFLOW_DATA_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   CERTIFICATES_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   ANNOUNCEMENTS_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
   ANNOUNCEMENTS_DATA_SOURCE: z.enum(["supabase", "mongo"]).default("supabase"),
+  ANNOUNCEMENTS_WRITE_MODE: z.enum(["supabase", "dual", "mongo"]).default("supabase"),
   STAFF_DIRECTORY_MONGO_READ_MODE: z.enum(["supabase", "mongo"]).default("supabase"),
+  STAFF_DIRECTORY_MONGO_WRITE_MODE: z.enum(["supabase", "dual", "mongo"]).default("supabase"),
   TURNSTILE_SECRET_KEY: z.string().optional().transform((value) => value?.trim() || undefined),
   TURNSTILE_TEST_MODE: z
     .union([z.string(), z.boolean()])
@@ -234,6 +237,14 @@ const envSchema = z.object({
   INVESTOR_PASSPORT_STORAGE_BUCKET: z.string().min(1).default("investor-passports"),
   CERTIFICATE_TEMPLATE_PATH: z.string().optional().transform((value) => value?.trim() || undefined),
 }).superRefine((value, context) => {
+  if (value.AUTH0_WORKFLOW_ACCESS_ENABLED && value.AUTH_MODE === "supabase") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AUTH_MODE"],
+      message: "AUTH_MODE must be dual or auth0 when AUTH0_WORKFLOW_ACCESS_ENABLED=true",
+    });
+  }
+
   if (value.AUTH_MODE === "supabase") {
     return;
   }
@@ -251,6 +262,60 @@ const envSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["AUTH0_AUDIENCE"],
       message: "AUTH0_AUDIENCE is required when AUTH_MODE is dual or auth0",
+    });
+  }
+
+  const mongoAuthorityEnabled = value.WORKFLOW_DATA_MONGO_WRITE_MODE !== "supabase"
+    || value.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo"
+    || value.PUBLIC_INTAKE_WRITE_MODE !== "supabase"
+    || value.PUBLIC_INTAKE_OTP_STORAGE_MODE === "mongo"
+    || value.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo"
+    || value.STAFF_DIRECTORY_MONGO_WRITE_MODE !== "supabase"
+    || value.NOTIFICATION_AUDIT_MONGO_READ_MODE === "mongo"
+    || value.AUDIT_LOGS_MONGO_READ_MODE === "mongo"
+    || value.NOTIFICATION_PREFERENCES_DATA_SOURCE === "mongo"
+    || value.NOTIFICATION_PREFERENCES_WRITE_MODE === "mongo"
+    || value.NOTIFICATIONS_DATA_SOURCE === "mongo"
+    || value.NOTIFICATIONS_WRITE_MODE === "mongo"
+    || value.ANNOUNCEMENTS_WRITE_MODE === "mongo"
+    || value.ANNOUNCEMENTS_DATA_SOURCE === "mongo"
+    || value.SECURITY_AUDIT_MONGO_WRITE_MODE === "mongo";
+  if (mongoAuthorityEnabled && (!value.MONGODB_URI || !value.MONGODB_DB_NAME)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["MONGODB_URI"],
+      message: "MONGODB_URI and MONGODB_DB_NAME are required when MongoDB authority is enabled",
+    });
+  }
+
+  if (value.STORAGE_PROVIDER === "s3" && (!value.S3_BUCKET || !value.S3_REGION || !value.S3_ACCESS_KEY_ID || !value.S3_SECRET_ACCESS_KEY)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["S3_BUCKET"],
+      message: "S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required when STORAGE_PROVIDER=s3",
+    });
+  }
+
+  const renderDeliveryAuthorityEnabled = [
+    value.BIRTHDAY_DELIVERY_AUTHORITY,
+    value.CERTIFICATE_NOTIFICATION_DELIVERY_AUTHORITY,
+    value.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY,
+    value.MATURITY_REMINDER_DELIVERY_AUTHORITY,
+    value.PAYMENT_REMINDER_DELIVERY_AUTHORITY,
+    value.MONTHLY_REPORT_DELIVERY_AUTHORITY,
+  ].some((authority) => authority === "render");
+  if (renderDeliveryAuthorityEnabled && !value.NOTIFICATION_RENDER_WORKER_ENABLED) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["NOTIFICATION_RENDER_WORKER_ENABLED"],
+      message: "NOTIFICATION_RENDER_WORKER_ENABLED=true is required when any delivery authority is render",
+    });
+  }
+  if (renderDeliveryAuthorityEnabled && (!value.MONGODB_URI || !value.MONGODB_DB_NAME)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["MONGODB_URI"],
+      message: "MONGODB_URI and MONGODB_DB_NAME are required when any delivery authority is render",
     });
   }
 });

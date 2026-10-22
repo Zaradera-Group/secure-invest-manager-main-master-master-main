@@ -278,12 +278,18 @@ export default function Profile() {
               <p className="text-sm font-medium">Authenticator App</p>
               <p className="text-sm text-muted-foreground">
                 {provider === 'auth0'
-                  ? 'MFA is managed by Auth0 during sign-in.'
+                  ? mfaRequired
+                    ? 'MFA is enforced by Auth0 for this staff role during sign-in.'
+                    : 'MFA policy is managed by Auth0 for this account.'
                   : mfaVerified ? 'MFA is enabled for this account.' : 'Set up TOTP MFA using Google Authenticator, Authy, or Microsoft Authenticator.'}
               </p>
             </div>
-            <Badge variant={mfaVerified ? 'default' : 'secondary'}>
-              {mfaVerified ? 'Enabled' : 'Not configured'}
+            <Badge
+              variant={provider === 'auth0' || mfaVerified ? 'default' : 'secondary'}
+            >
+              {provider === 'auth0'
+                ? mfaRequired ? 'Required by Auth0' : 'Managed by Auth0'
+                : mfaVerified ? 'Enabled' : 'Not configured'}
             </Badge>
           </div>
 
