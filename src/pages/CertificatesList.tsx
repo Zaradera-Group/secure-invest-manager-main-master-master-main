@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Eye, FileCheck2, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { useCertificatesList } from '@/hooks/useCertificates';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,41 +28,13 @@ export default function CertificatesList() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const navigate = useNavigate();
 
-  const { data: certificates = [], isLoading } = useQuery({
-    queryKey: ['certificates-list', categoryFilter, statusFilter],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('certificates' as never)
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      const rows = (data ?? []) as unknown as CertificateRow[];
-      const investorEmails = [...new Set(rows.map((certificate) => certificate.investor_email.toLowerCase()))];
-      const { data: investors, error: investorError } = await supabase
-        .from('investors')
-        .select('name,email,investor_category')
-        .in('email', investorEmails);
-
-      if (investorError) throw investorError;
-
-      const investorMap = new Map(
-        ((investors ?? []) as Array<{ name: string; email: string; investor_category: string | null }>).map((investor) => [
-          `${investor.email.toLowerCase()}::${investor.name}`,
-          investor.investor_category,
-        ]),
-      );
-
-      return rows
-        .map((certificate) => ({
-          ...certificate,
-          investor_category: investorMap.get(`${certificate.investor_email.toLowerCase()}::${certificate.investor_name}`) ?? null,
-        }))
-        .filter((certificate) => categoryFilter === 'all' || certificate.investor_category === categoryFilter)
-        .filter((certificate) => statusFilter === 'all' || certificate.status === statusFilter);
-    },
-  });
+  const { data: certificateRows = [], isLoading } = useCertificatesList();
+  const certificates = useMemo(
+    () => certificateRows
+      .filter((certificate) => categoryFilter === 'all' || certificate.investor_category === categoryFilter)
+      .filter((certificate) => statusFilter === 'all' || certificate.status === statusFilter) as CertificateRow[],
+    [certificateRows, categoryFilter, statusFilter],
+  );
 
   const stats = useMemo(
     () => ({

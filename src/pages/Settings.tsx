@@ -10,11 +10,9 @@ import { Switch } from '@/components/ui/switch';
 import { Lock, Shield, Database, Bell, Plus, Trash2, Mail } from 'lucide-react';
 import { useAnnouncements, useCreateAnnouncement, useDeleteAnnouncement } from '@/hooks/useAnnouncements';
 import { useNotificationPreferences, useUpdateNotificationPreferences } from '@/hooks/useNotifications';
-import { useUpdateAvailability } from '@/hooks/useCertificates';
+import { useApprovalAvailability, useUpdateApprovalAvailability } from '@/hooks/useApprovalAvailability';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 
 export default function Settings() {
   const [announcementPage, setAnnouncementPage] = useState(0);
@@ -34,24 +32,11 @@ export default function Settings() {
   // Notification preferences
   const { data: notificationPrefs, isLoading: prefsLoading } = useNotificationPreferences();
   const updatePreferences = useUpdateNotificationPreferences();
-  const { role, user } = useAuth();
-  const updateAvailability = useUpdateAvailability();
-
-  const { data: isAvailable } = useQuery({
-    queryKey: ['user-availability', user?.id, role],
-    enabled: !!user?.id && !!role && (role === 'investment_manager' || role === 'accountant' || role === 'general_manager'),
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('user_roles' as never)
-        .select('is_available_for_approvals')
-        .eq('user_id', user!.id)
-        .eq('role', role)
-        .single();
-
-      if (error) throw error;
-      return ((data as { is_available_for_approvals?: boolean } | null)?.is_available_for_approvals) ?? true;
-    },
-  });
+  const { role } = useAuth();
+  const isApprovalRole = role === 'investment_manager' || role === 'accountant' || role === 'general_manager';
+  const { data: approvalAvailability } = useApprovalAvailability(isApprovalRole);
+  const updateAvailability = useUpdateApprovalAvailability();
+  const canManageAnnouncements = role === 'admin' || role === 'super_admin';
 
   const getAnnouncementBadgeVariant = (status: string) => {
     if (status === 'urgent') return 'destructive' as const;
@@ -82,14 +67,17 @@ export default function Settings() {
                 {new Date(announcement.created_at).toLocaleDateString()}
               </p>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => handleDeleteAnnouncement(announcement.id)}
-              disabled={deleteAnnouncement.isPending}
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
+            {canManageAnnouncements && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handleDeleteAnnouncement(announcement.id)}
+                disabled={deleteAnnouncement.isPending}
+                aria-label={`Delete announcement: ${announcement.title}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
         ))}
         <div className="flex items-center justify-between pt-2">
@@ -232,56 +220,58 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-heading flex items-center gap-2">
-              <Bell className="w-4 h-4 text-primary" />
-              Create Announcement
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Input
-                placeholder="Announcement title"
-                value={newAnnouncement.title}
-                onChange={(e) => setNewAnnouncement(prev => ({ ...prev, title: e.target.value }))}
-              />
-            </div>
-            <div>
-              <Textarea
-                placeholder="Announcement details"
-                value={newAnnouncement.detail}
-                onChange={(e) => setNewAnnouncement(prev => ({ ...prev, detail: e.target.value }))}
-                rows={3}
-              />
-            </div>
-            <div>
-              <Select
-                value={newAnnouncement.status}
-                onValueChange={(value: 'info' | 'urgent' | 'matured') =>
-                  setNewAnnouncement(prev => ({ ...prev, status: value }))
-                }
+        {canManageAnnouncements && (
+          <Card className="glass-card">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-heading flex items-center gap-2">
+                <Bell className="w-4 h-4 text-primary" />
+                Create Announcement
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Input
+                  placeholder="Announcement title"
+                  value={newAnnouncement.title}
+                  onChange={(e) => setNewAnnouncement(prev => ({ ...prev, title: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Textarea
+                  placeholder="Announcement details"
+                  value={newAnnouncement.detail}
+                  onChange={(e) => setNewAnnouncement(prev => ({ ...prev, detail: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+              <div>
+                <Select
+                  value={newAnnouncement.status}
+                  onValueChange={(value: 'info' | 'urgent' | 'matured') =>
+                    setNewAnnouncement(prev => ({ ...prev, status: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="info">Info</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                    <SelectItem value="matured">Matured</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                onClick={handleCreateAnnouncement}
+                disabled={createAnnouncement.isPending}
+                className="w-full"
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="info">Info</SelectItem>
-                  <SelectItem value="urgent">Urgent</SelectItem>
-                  <SelectItem value="matured">Matured</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              onClick={handleCreateAnnouncement}
-              disabled={createAnnouncement.isPending}
-              className="w-full"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              {createAnnouncement.isPending ? 'Creating...' : 'Create Announcement'}
-            </Button>
-          </CardContent>
-        </Card>
+                <Plus className="w-4 h-4 mr-2" />
+                {createAnnouncement.isPending ? 'Creating...' : 'Create Announcement'}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card className="glass-card">
@@ -355,7 +345,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {(role === 'investment_manager' || role === 'accountant' || role === 'general_manager') && (
+      {isApprovalRole && (
         <Card className="glass-card">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-heading flex items-center gap-2">
@@ -370,7 +360,7 @@ export default function Settings() {
                 <p className="text-sm text-muted-foreground">Toggle to indicate if you are available to receive and process certificate approvals</p>
               </div>
               <Switch
-                checked={isAvailable ?? true}
+                checked={approvalAvailability?.available ?? true}
                 onCheckedChange={handleUpdateAvailability}
                 disabled={updateAvailability.isPending}
               />

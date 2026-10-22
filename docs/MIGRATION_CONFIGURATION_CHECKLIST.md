@@ -18,6 +18,7 @@ This checklist prepares the Zaradera Vest platform for a controlled migration fr
   - `PUBLIC_INTAKE_MONGO_MIRROR_ENABLED=true`
   - `NOTIFICATIONS_MONGO_MIRROR_ENABLED=true`
   - `WORKFLOW_DATA_MONGO_MIRROR_ENABLED=true`
+- [ ] Notification queue reconciliation is enabled with `NOTIFICATION_QUEUE_MONGO_RECONCILIATION_ENABLED=true`, and `npm run audit:notification-queue:mongo` reports `passed: true` from Render Shell.
 - [ ] A documented MongoDB backup/export process exists before cutover.
 
 ## 2. AWS S3 storage
@@ -25,6 +26,9 @@ This checklist prepares the Zaradera Vest platform for a controlled migration fr
 - [ ] Production S3 bucket exists in the intended AWS Region.
 - [ ] Render IAM user has only the required bucket permissions.
 - [ ] Render variables are configured: `STORAGE_PROVIDER=s3`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and optional `S3_PREFIX`.
+- [ ] A read-only Supabase storage inventory has been recorded by running `npm run audit:storage:supabase` from Render Shell. This establishes the certificate/passport object count and total size before copying historical files.
+- [ ] A dry run of `npm run transfer:storage:s3` completed with the intended S3 bucket and prefix. The command copies only with `STORAGE_TRANSFER_EXECUTE=true`; it never deletes source objects or overwrites mismatched target objects.
+- [ ] Historical certificate, template, signature, and passport objects have been copied and verified in S3 before setting `STORAGE_PROVIDER=s3`.
 - [ ] Certificate PDFs, signatures, templates, and passport uploads use S3 signed URLs.
 - [ ] `STORAGE_HEALTH_CHECK_ENABLED` is disabled after the configuration check, or protected by a long random `STORAGE_HEALTH_CHECK_TOKEN`.
 

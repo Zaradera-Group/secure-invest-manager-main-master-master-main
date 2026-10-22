@@ -1,9 +1,29 @@
 import "./types/express.js";
 import { app } from "./app.js";
 import { env } from "./config/env.js";
+import { startAuditLogReconciliationJob } from "./jobs/audit-log-reconciliation.job.js";
+import { startAuth0StaffAccountReconciliationJob } from "./jobs/auth0-staff-account-reconciliation.job.js";
 import { startBirthdaySmsJob } from "./jobs/birthday-sms.job.js";
+import { startNotificationAuditReconciliationJob } from "./jobs/notification-audit-reconciliation.job.js";
+import { startNotificationWorkerShadowJob } from "./jobs/notification-worker-shadow.job.js";
+import { startNotificationQueueReconciliationJob } from "./jobs/notification-queue-reconciliation.job.js";
+import { startNotificationRenderWorkerJob } from "./jobs/notification-render-worker.job.js";
+import { startMongoMaturityReminderShadowJob } from "./jobs/mongo-maturity-reminder-shadow.job.js";
+import { startMongoMaturityReminderProducerJob } from "./jobs/mongo-maturity-reminder-producer.job.js";
+import { startMongoPaymentReminderProducerJob } from "./jobs/mongo-payment-reminder-producer.job.js";
+import { startMongoMonthlyReportProducerJob } from "./jobs/mongo-monthly-report-producer.job.js";
 
 app.listen(env.PORT, () => {
   console.log(`Certificate workflow API listening on port ${env.PORT}`);
   startBirthdaySmsJob();
+  startAuditLogReconciliationJob();
+  startAuth0StaffAccountReconciliationJob();
+  startNotificationAuditReconciliationJob();
+  startNotificationQueueReconciliationJob();
+  startMongoMaturityReminderShadowJob();
+  startMongoMaturityReminderProducerJob();
+  startMongoPaymentReminderProducerJob();
+  startMongoMonthlyReportProducerJob();
+  startNotificationWorkerShadowJob();
+  startNotificationRenderWorkerJob();
 });

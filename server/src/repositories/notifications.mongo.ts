@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { randomUUID } from "node:crypto";
 import { getMongoDb, isMongoConfigured } from "../lib/mongodb.js";
 
 type NotificationMirrorInput = {
@@ -6,6 +7,22 @@ type NotificationMirrorInput = {
   notification: Record<string, unknown>;
   createdAt?: string;
 };
+
+type MirroredNotificationDocument = {
+  rawSupabaseRecord?: Record<string, unknown>;
+};
+
+export type NotificationReadFilter = {
+  recipientUserId: string;
+  recipientEmail: string;
+  userRole: "manager" | "general_manager" | "ceo" | "investor";
+};
+
+const buildVisibilityFilter = (filter: NotificationReadFilter) => (
+  filter.userRole === "investor"
+    ? { $or: [{ recipientUserId: filter.recipientUserId }, { recipientEmail: filter.recipientEmail }] }
+    : { $or: [{ recipientUserId: filter.recipientUserId }, { userRole: filter.userRole }] }
+);
 
 let indexesReady: Promise<void> | null = null;
 
@@ -98,4 +115,267 @@ export function mirrorNotificationToMongoSafely(input: NotificationMirrorInput) 
       reason: error instanceof Error ? error.message : String(error),
     });
   });
+}
+
+export function markNotificationReadInMongoSafely(notificationId: string, readAt: string) {
+  if (!env.NOTIFICATIONS_MONGO_MIRROR_ENABLED || !isMongoConfigured()) return;
+
+  void getMongoDb()
+    .then((db) => db.collection("notifications").updateOne(
+      { supabaseNotificationId: notificationId },
+      {
+        $set: {
+          isRead: true,
+          readAt,
+          "rawSupabaseRecord.is_read": true,
+          "rawSupabaseRecord.read_at": readAt,
+          mirroredAt: new Date().toISOString(),
+        },
+      },
+    ))
+    .catch((error) => {
+      console.warn("[notifications.mongo] Failed to mark mirrored notification as read", {
+        notificationId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+export async function getDashboardNotificationFromMongo(notificationId: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const record = await (await getMongoDb()).collection<MirroredNotificationDocument>("notifications")
+    .findOne({ supabaseNotificationId: notificationId }, { projection: { rawSupabaseRecord: 1 } });
+  return record?.rawSupabaseRecord ?? null;
+}
+
+export async function markNotificationReadInMongo(notificationId: string, readAt: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const result = await (await getMongoDb()).collection("notifications").updateOne(
+    { supabaseNotificationId: notificationId },
+    {
+      $set: {
+        isRead: true,
+        readAt,
+        "rawSupabaseRecord.is_read": true,
+        "rawSupabaseRecord.read_at": readAt,
+        mirroredAt: new Date().toISOString(),
+      },
+    },
+  );
+  if (result.matchedCount !== 1) throw new Error("Notification not found");
+}
+
+export function markNotificationsReadInMongoSafely(filter: NotificationReadFilter, readAt: string) {
+  if (!env.NOTIFICATIONS_MONGO_MIRROR_ENABLED || !isMongoConfigured()) return;
+
+  const visibilityFilter = buildVisibilityFilter(filter);
+
+  void getMongoDb()
+    .then((db) => db.collection("notifications").updateMany(
+      { ...visibilityFilter, isRead: false },
+      {
+        $set: {
+          isRead: true,
+          readAt,
+          "rawSupabaseRecord.is_read": true,
+          "rawSupabaseRecord.read_at": readAt,
+          mirroredAt: new Date().toISOString(),
+        },
+      },
+    ))
+    .catch((error) => {
+      console.warn("[notifications.mongo] Failed to mark mirrored notifications as read", {
+        recipientUserId: filter.recipientUserId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+export async function markNotificationsReadInMongo(filter: NotificationReadFilter, readAt: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const visibilityFilter = buildVisibilityFilter(filter);
+  await (await getMongoDb()).collection("notifications").updateMany(
+    { ...visibilityFilter, isRead: false },
+    {
+      $set: {
+        isRead: true,
+        readAt,
+        "rawSupabaseRecord.is_read": true,
+        "rawSupabaseRecord.read_at": readAt,
+        mirroredAt: new Date().toISOString(),
+      },
+    },
+  );
+}
+
+export async function listDashboardNotificationsFromMongo(filter: NotificationReadFilter, limit: number) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const db = await getMongoDb();
+  const records = await db.collection<MirroredNotificationDocument>("notifications")
+    .find(buildVisibilityFilter(filter), { projection: { rawSupabaseRecord: 1 } })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+
+  return records.flatMap((record) => record.rawSupabaseRecord ? [record.rawSupabaseRecord] : []);
+}
+
+export async function countUnreadDashboardNotificationsFromMongo(filter: NotificationReadFilter) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const db = await getMongoDb();
+  return db.collection("notifications").countDocuments({ ...buildVisibilityFilter(filter), isRead: false });
+}
+
+export async function listCertificateNotificationsFromMongo(certificateId: string) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const records = await (await getMongoDb()).collection<MirroredNotificationDocument>("notifications")
+    .find({ certificateId }, { projection: { rawSupabaseRecord: 1 } })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  return records.flatMap((record) => record.rawSupabaseRecord ? [record.rawSupabaseRecord] : []);
+}
+
+export async function createNativeDashboardNotification(input: {
+  dedupeKey: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  userRole: "manager" | "general_manager" | "ceo";
+  investorId: string;
+  title: string;
+  detail: string;
+  actionPath: string;
+}) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+  const now = new Date().toISOString();
+  const id = `mongo:${randomUUID()}`;
+  const notification = {
+    id,
+    certificate_id: null,
+    user_role: input.userRole,
+    recipient_user_id: input.recipientUserId,
+    recipient_email: input.recipientEmail,
+    title: input.title,
+    detail: input.detail,
+    message: input.detail,
+    action_path: input.actionPath,
+    is_read: false,
+    read_at: null,
+    created_at: now,
+  };
+  const result = await (await getMongoDb()).collection("notifications").updateOne(
+    { nativeDedupeKey: input.dedupeKey },
+    {
+      $setOnInsert: {
+        supabaseNotificationId: id,
+        nativeDedupeKey: input.dedupeKey,
+        certificateId: null,
+        recipientUserId: input.recipientUserId,
+        recipientEmail: input.recipientEmail,
+        userRole: input.userRole,
+        title: input.title,
+        detail: input.detail,
+        message: input.detail,
+        actionPath: input.actionPath,
+        isRead: false,
+        readAt: null,
+        createdAt: now,
+        source: "mongo_native",
+        rawSupabaseRecord: notification,
+        insertedAt: now,
+      },
+    },
+    { upsert: true },
+  );
+  return { id, inserted: result.upsertedCount === 1 };
+}
+
+export async function createNativeCertificateNotification(input: {
+  certificateId: string;
+  userRole: "manager" | "general_manager" | "ceo" | "investor";
+  recipientUserId?: string;
+  recipientEmail?: string;
+  title: string;
+  detail: string;
+  actionPath?: string | null;
+}) {
+  if (!isMongoConfigured()) throw new Error("MongoDB is not configured");
+
+  indexesReady ??= ensureNotificationIndexes();
+  await indexesReady;
+
+  const now = new Date().toISOString();
+  const id = `mongo:${randomUUID()}`;
+  const dedupeKey = [
+    "certificate",
+    input.certificateId,
+    input.userRole,
+    input.recipientUserId ?? input.recipientEmail ?? "unknown",
+    input.detail,
+  ].join(":");
+  const notification = {
+    id,
+    certificate_id: input.certificateId,
+    title: input.title,
+    detail: input.detail,
+    message: input.detail,
+    user_role: input.userRole,
+    recipient_user_id: input.recipientUserId ?? null,
+    recipient_email: input.recipientEmail ?? null,
+    action_path: input.actionPath ?? null,
+    is_read: false,
+    read_at: null,
+    created_at: now,
+  };
+
+  const result = await (await getMongoDb()).collection("notifications").updateOne(
+    { nativeDedupeKey: dedupeKey },
+    {
+      $setOnInsert: {
+        supabaseNotificationId: id,
+        nativeDedupeKey: dedupeKey,
+        certificateId: input.certificateId,
+        recipientUserId: input.recipientUserId ?? null,
+        recipientEmail: input.recipientEmail ?? null,
+        userRole: input.userRole,
+        title: input.title,
+        detail: input.detail,
+        message: input.detail,
+        actionPath: input.actionPath ?? null,
+        isRead: false,
+        readAt: null,
+        createdAt: now,
+        source: "mongo_native",
+        rawSupabaseRecord: notification,
+        insertedAt: now,
+      },
+    },
+    { upsert: true },
+  );
+
+  return { id, inserted: result.upsertedCount === 1 };
 }

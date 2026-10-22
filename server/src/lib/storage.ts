@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -12,6 +13,8 @@ type UploadObjectArgs = {
   path: string;
   bytes: Uint8Array | Buffer;
   contentType: string;
+  supabaseBucket?: string;
+  upsert?: boolean;
 };
 
 const s3Client = env.STORAGE_PROVIDER === "s3"
@@ -52,7 +55,7 @@ export function resolveStoragePath(path: string) {
     : `${env.S3_PREFIX}/${normalizedPath}`;
 }
 
-export async function uploadObject({ path, bytes, contentType }: UploadObjectArgs) {
+export async function uploadObject({ path, bytes, contentType, supabaseBucket, upsert = true }: UploadObjectArgs) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
@@ -69,10 +72,10 @@ export async function uploadObject({ path, bytes, contentType }: UploadObjectArg
   }
 
   const { error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
+    .from(supabaseBucket ?? env.CERTIFICATE_STORAGE_BUCKET)
     .upload(storagePath, bytes, {
       contentType,
-      upsert: true,
+      upsert,
     });
 
   if (error) {
@@ -82,23 +85,37 @@ export async function uploadObject({ path, bytes, contentType }: UploadObjectArg
   return storagePath;
 }
 
-export async function createSignedObjectUrl(path: string, expiresInSeconds = env.S3_SIGNED_URL_EXPIRES_SECONDS) {
+export async function createSignedObjectUrl(
+  path: string,
+  expiresInSeconds = env.S3_SIGNED_URL_EXPIRES_SECONDS,
+  supabaseBucket = env.CERTIFICATE_STORAGE_BUCKET,
+) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
-    return getSignedUrl(
-      s3Client,
-      new GetObjectCommand({
-        Bucket: getS3Bucket(),
-        Key: storagePath,
-      }),
-      { expiresIn: expiresInSeconds },
-    );
+    try {
+      await s3Client.send(new HeadObjectCommand({ Bucket: getS3Bucket(), Key: storagePath }));
+      return getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: getS3Bucket(),
+          Key: storagePath,
+        }),
+        { expiresIn: expiresInSeconds },
+      );
+    } catch (error) {
+      if (!shouldUseSupabaseReadFallback(error)) throw error;
+      return createSupabaseSignedObjectUrl(normalizeStoragePath(path), expiresInSeconds, supabaseBucket);
+    }
   }
 
+  return createSupabaseSignedObjectUrl(storagePath, expiresInSeconds, supabaseBucket);
+}
+
+async function createSupabaseSignedObjectUrl(path: string, expiresInSeconds: number, bucket: string) {
   const { data, error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
-    .createSignedUrl(storagePath, expiresInSeconds);
+    .from(bucket)
+    .createSignedUrl(path, expiresInSeconds);
 
   if (error || !data?.signedUrl) {
     throw new Error(`Failed to create signed storage url: ${error?.message ?? "Unknown error"}`);
@@ -107,27 +124,33 @@ export async function createSignedObjectUrl(path: string, expiresInSeconds = env
   return data.signedUrl;
 }
 
-export async function downloadObject(path: string) {
+export async function downloadObject(path: string, supabaseBucket = env.CERTIFICATE_STORAGE_BUCKET) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
-    const response = await s3Client.send(
-      new GetObjectCommand({
-        Bucket: getS3Bucket(),
-        Key: storagePath,
-      }),
-    );
+    try {
+      const response = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: getS3Bucket(),
+          Key: storagePath,
+        }),
+      );
 
-    if (!response.Body) {
-      throw new Error("S3 object had no response body");
+      if (!response.Body) throw new Error("S3 object had no response body");
+      return Buffer.from(await response.Body.transformToByteArray());
+    } catch (error) {
+      if (!shouldUseSupabaseReadFallback(error)) throw error;
+      return downloadSupabaseObject(normalizeStoragePath(path), supabaseBucket);
     }
-
-    return Buffer.from(await response.Body.transformToByteArray());
   }
 
+  return downloadSupabaseObject(storagePath, supabaseBucket);
+}
+
+async function downloadSupabaseObject(path: string, bucket: string) {
   const { data, error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
-    .download(storagePath);
+    .from(bucket)
+    .download(path);
 
   if (error || !data) {
     throw new Error(`Failed to download storage object: ${error?.message ?? "Unknown error"}`);
@@ -136,7 +159,18 @@ export async function downloadObject(path: string) {
   return Buffer.from(await data.arrayBuffer());
 }
 
-export async function deleteObject(path: string) {
+function shouldUseSupabaseReadFallback(error: unknown) {
+  if (!env.STORAGE_S3_READ_FALLBACK_TO_SUPABASE) return false;
+  if (!error || typeof error !== "object") return false;
+
+  const candidate = error as { name?: unknown; Code?: unknown; code?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return candidate.name === "NoSuchKey"
+    || candidate.Code === "NoSuchKey"
+    || candidate.code === "NoSuchKey"
+    || candidate.$metadata?.httpStatusCode === 404;
+}
+
+export async function deleteObject(path: string, supabaseBucket = env.CERTIFICATE_STORAGE_BUCKET) {
   const storagePath = resolveStoragePath(path);
 
   if (s3Client) {
@@ -150,7 +184,7 @@ export async function deleteObject(path: string) {
   }
 
   const { error } = await adminSupabase.storage
-    .from(env.CERTIFICATE_STORAGE_BUCKET)
+    .from(supabaseBucket)
     .remove([storagePath]);
 
   if (error) {

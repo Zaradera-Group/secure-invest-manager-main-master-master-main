@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode, useMemo
 import { type Session, type User, type AuthError, type AuthChangeEvent } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
-type AppRole =
+export type AppRole =
   | 'super_admin'
   | 'admin'
   | 'staff'
@@ -11,17 +11,24 @@ type AppRole =
   | 'general_manager'
   | 'software_engineer';
 
-type RequestedRole = 'ceo' | 'general_manager' | 'investment_manager' | 'accountant' | 'it_manager';
+export type RequestedRole = 'ceo' | 'general_manager' | 'investment_manager' | 'accountant' | 'it_manager';
+export type AppAuthUser = {
+  id: string;
+  email?: string;
+  user_metadata: {
+    full_name?: string;
+    phone?: string;
+  };
+  created_at?: string;
+  last_sign_in_at?: string;
+};
+export type AppAuthSession = {
+  access_token: string;
+  user: AppAuthUser;
+};
 type AllowedAuthUser = {
   email: string;
   role: AppRole | null;
-  full_name?: string | null;
-  is_active?: boolean | null;
-};
-
-type AllowedAuthUserRecord = {
-  email?: string | null;
-  role?: string | null;
   full_name?: string | null;
   is_active?: boolean | null;
 };
@@ -30,9 +37,10 @@ type AuthProviderProps = Readonly<{
   children: ReactNode;
 }>;
 
-interface AuthContextType {
-  session: Session | null;
-  user: User | null;
+export interface AuthContextType {
+  provider: 'supabase' | 'auth0';
+  session: AppAuthSession | null;
+  user: AppAuthUser | null;
   role: AppRole | null;
   loading: boolean;
   signupEnabled: boolean;
@@ -41,7 +49,7 @@ interface AuthContextType {
   mfaRequired: boolean;
   mfaVerified: boolean;
   refreshMfaStatus: (force?: boolean) => Promise<void>;
-  ensureFreshSession: () => Promise<Session | null>;
+  ensureFreshSession: () => Promise<AppAuthSession | null>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (
     email: string,
@@ -52,7 +60,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000;
 const MFA_STATUS_REFRESH_INTERVAL_MS = 30 * 1000;
 const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
@@ -61,6 +69,7 @@ const LAST_ACTIVITY_STORAGE_KEY = 'auth:last-activity-at';
 const REMOTE_SIGN_OUT_STORAGE_KEY = 'auth:force-signout';
 const VISIBILITY_SIGN_OUT_BYPASS_STORAGE_KEY = 'auth:visibility-signout-bypass-until';
 const SHOULD_LOG_AUTH = import.meta.env.DEV;
+const AUTH_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
 
 function isVisibilitySignOutBypassed() {
   const rawValue = globalThis.sessionStorage?.getItem(VISIBILITY_SIGN_OUT_BYPASS_STORAGE_KEY);
@@ -77,7 +86,7 @@ function isVisibilitySignOutBypassed() {
   return true;
 }
 
-function normalizeAppRole(role: string | null | undefined): AppRole | null {
+export function normalizeAppRole(role: string | null | undefined): AppRole | null {
   const normalizedRole = role?.trim().toLowerCase().replace(/[\s-]+/g, '_') ?? null;
 
   switch (normalizedRole) {
@@ -134,26 +143,6 @@ function formatRoleLabel(role: AppRole): string {
   }
 }
 
-function toAllowedAuthUserRecord(payload: unknown): AllowedAuthUserRecord | null {
-  if (!payload) {
-    return null;
-  }
-
-  if (Array.isArray(payload)) {
-    const [firstRecord] = payload;
-    if (!firstRecord || typeof firstRecord !== 'object') {
-      return null;
-    }
-    return firstRecord as AllowedAuthUserRecord;
-  }
-
-  if (typeof payload !== 'object') {
-    return null;
-  }
-
-  return payload as AllowedAuthUserRecord;
-}
-
 function mapRequestedRoleToAppRole(requestedRole: RequestedRole): AppRole {
   switch (requestedRole) {
     case 'ceo':
@@ -167,6 +156,21 @@ function mapRequestedRoleToAppRole(requestedRole: RequestedRole): AppRole {
     case 'it_manager':
       return 'admin';
   }
+}
+
+async function postAuthAccess<T>(path: string, body: Record<string, string>): Promise<T> {
+  const response = await fetch(`${AUTH_API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => null) as (T & { message?: string }) | null;
+
+  if (!response.ok || !payload) {
+    throw new Error(payload?.message ?? 'Access verification is temporarily unavailable.');
+  }
+
+  return payload;
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -269,16 +273,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return false;
     }
 
-    const { data, error } = await supabase.rpc('is_allowed_auth_email' as never, {
-      target_email: email.trim().toLowerCase(),
-    } as never);
-
-    if (error) {
+    try {
+      const result = await postAuthAccess<{ allowed: boolean }>('/auth/access/approved-email', {
+        email: email.trim().toLowerCase(),
+      });
+      return result.allowed;
+    } catch (error) {
       console.error('[Auth] allowlist lookup failed:', error);
       return null;
     }
-
-    return !!data;
   }, []);
 
   const getAllowedAuthUser = useCallback(async (email?: string | null): Promise<AllowedAuthUser | null> => {
@@ -288,76 +291,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    const signupRpcResult = await supabase.rpc('get_signup_allowed_auth_user' as never, {
-      target_email: normalizedEmail,
-    } as never);
+    const result = await postAuthAccess<{ user: AllowedAuthUser | null }>('/auth/access/approved-user', {
+      email: normalizedEmail,
+    });
 
-    const signupRpcAllowedUser = toAllowedAuthUserRecord(signupRpcResult.data);
-
-    if (!signupRpcResult.error && signupRpcAllowedUser) {
-      return {
-        email: signupRpcAllowedUser.email?.trim().toLowerCase() ?? normalizedEmail,
-        role: normalizeAppRole(signupRpcAllowedUser.role),
-        full_name: signupRpcAllowedUser.full_name ?? null,
-        is_active: signupRpcAllowedUser.is_active ?? true,
-      };
-    }
-
-    if (signupRpcResult.error && SHOULD_LOG_AUTH) {
-      console.warn('[Auth] public signup allowlist lookup failed, falling back to legacy lookup:', signupRpcResult.error);
-    }
-
-    const rpcResult = await supabase.rpc('get_allowed_auth_user' as never, {
-      target_email: normalizedEmail,
-    } as never);
-    const typedRpcResult = rpcResult as { data?: unknown; error?: unknown };
-
-    const rpcAllowedUser = toAllowedAuthUserRecord(typedRpcResult.data);
-
-    if (!typedRpcResult.error && rpcAllowedUser) {
-      return {
-        email: rpcAllowedUser.email?.trim().toLowerCase() ?? normalizedEmail,
-        role: normalizeAppRole(rpcAllowedUser.role),
-        full_name: rpcAllowedUser.full_name ?? null,
-        is_active: rpcAllowedUser.is_active ?? true,
-      };
-    }
-
-    if (typedRpcResult.error) {
-      console.warn('[Auth] allowlist RPC lookup failed, falling back to table query:', typedRpcResult.error);
-    } else if (typedRpcResult.data && SHOULD_LOG_AUTH) {
-      console.warn('[Auth] allowlist RPC returned an unexpected payload shape:', typedRpcResult.data);
-    }
-
-    const { data, error } = await supabase
-      .from('allowed_auth_users' as never)
-      .select('email, role, full_name, is_active')
-      .eq('email', normalizedEmail)
-      .eq('is_active', true)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      console.error('[Auth] allowlist table lookup failed:', error);
-      if (SHOULD_LOG_AUTH) {
-        console.warn('[Auth] direct allowlist table lookup is not available for this client; signup should rely on the RPC allowlist function.', {
-          code: error.code,
-          message: error.message,
-        });
-      }
-      throw error;
-    }
-
-    if (!data) {
+    if (!result.user) {
       return null;
     }
 
-    const allowedUser = data as AllowedAuthUserRecord;
     return {
-      email: allowedUser.email?.trim().toLowerCase() ?? normalizedEmail,
-      role: normalizeAppRole(allowedUser.role),
-      full_name: allowedUser.full_name ?? null,
-      is_active: allowedUser.is_active ?? true,
+      email: result.user.email?.trim().toLowerCase() ?? normalizedEmail,
+      role: normalizeAppRole(result.user.role),
+      full_name: result.user.full_name ?? null,
+      is_active: result.user.is_active ?? true,
     };
   }, []);
 
@@ -382,14 +328,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [clearAuthState]);
 
-  const fetchRole = useCallback(async (userId: string) => {
+  const fetchRole = useCallback(async (accessToken: string) => {
     try {
-      const { data } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', userId)
-        .limit(1)
-        .maybeSingle();
+      const response = await fetch(`${AUTH_API_URL}/auth/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await response.json().catch(() => null) as { role?: string; message?: string } | null;
+      if (!response.ok) throw new Error(data?.message ?? 'Could not load your access role.');
 
       const normalizedRole = normalizeAppRole(data?.role);
 
@@ -450,7 +395,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setSession(nextSession);
       setUser(nextSession.user);
       lastValidatedAccessTokenRef.current = nextSession.access_token ?? null;
-      await fetchRole(nextSession.user.id).catch((err) => console.error('Failed to fetch role:', err));
+      await fetchRole(nextSession.access_token).catch((err) => console.error('Failed to fetch role:', err));
       return;
     }
 
@@ -470,7 +415,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setAccessIssue(null);
     approvedEmailRef.current = normalizedEmail;
     lastValidatedAccessTokenRef.current = nextSession.access_token ?? null;
-    await fetchRole(nextSession.user.id).catch((err) => console.error('Failed to fetch role:', err));
+    await fetchRole(nextSession.access_token).catch((err) => console.error('Failed to fetch role:', err));
   }, [clearAuthState, fetchRole, isAllowedAuthEmail]);
 
   const resetInactivityTimer = useCallback(() => {
@@ -662,12 +607,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       setAccessIssue(null);
       const normalizedEmail = email.trim().toLowerCase();
-      const { data: isAllowed, error: allowlistError } = await supabase.rpc('is_allowed_auth_email' as never, {
-        target_email: normalizedEmail,
-      } as never);
+      const isAllowed = await isAllowedAuthEmail(normalizedEmail);
 
-      if (allowlistError) {
-        console.error('[Auth] allowlist check failed:', allowlistError);
+      if (isAllowed === null) {
         return {
           error: {
             name: 'AuthApiError',
@@ -677,7 +619,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      if (!isAllowed) {
+      if (isAllowed === false) {
         return {
           error: {
             name: 'AuthApiError',
@@ -716,7 +658,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (err) {
       return { error: err as AuthError };
     }
-  }, [validateAllowedSession]);
+  }, [isAllowedAuthEmail, validateAllowedSession]);
 
   const signUp = useCallback(async (
     email: string,
@@ -795,7 +737,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const mfaRequired = requiresMfaForRole(role);
 
   const value = useMemo(
-    () => ({ session, user, role, loading, signupEnabled, emailVerified, accessIssue, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession, signIn, signUp, signOut }),
+    () => ({ provider: 'supabase' as const, session, user, role, loading, signupEnabled, emailVerified, accessIssue, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession, signIn, signUp, signOut }),
     [session, user, role, loading, signupEnabled, emailVerified, accessIssue, mfaRequired, mfaVerified, refreshMfaStatus, ensureFreshSession, signIn, signUp, signOut]
   );
 

@@ -56,7 +56,7 @@ export default function Login() {
   const [turnstileStatus, setTurnstileStatus] = useState<string | null>(null);
   const [mathChallenge, setMathChallenge] = useState<MathChallenge>(() => createMathChallenge());
   const [mathAnswer, setMathAnswer] = useState('');
-  const { signIn, signUp, role, accessIssue, signupEnabled } = useAuth();
+  const { provider, signIn, signUp, role, accessIssue, signupEnabled } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
@@ -192,6 +192,23 @@ export default function Login() {
     setLoading(false);
   };
 
+  const handleAuth0SignIn = async () => {
+    setLoading(true);
+    try {
+      const { error } = await signIn('', '');
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      toast({
+        title: 'Unable to continue',
+        description: error instanceof Error ? error.message : 'Unable to start secure sign-in.',
+        variant: 'destructive',
+      });
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <motion.div
@@ -215,7 +232,7 @@ export default function Login() {
 
         <Card className="glass-card">
           <CardHeader className="text-center pb-2">
-            <div className="mx-auto mb-2 flex rounded-full bg-secondary p-1">
+            {provider === 'supabase' && <div className="mx-auto mb-2 flex rounded-full bg-secondary p-1">
               <button
                 type="button"
                 onClick={() => handleModeChange('signin')}
@@ -232,14 +249,34 @@ export default function Login() {
                   Sign Up
                 </button>
               )}
-            </div>
-            <CardTitle className="font-heading text-xl">{mode === 'signin' ? 'Welcome Back' : 'Create Approved Account'}</CardTitle>
+            </div>}
+            <CardTitle className="font-heading text-xl">
+              {provider === 'auth0' ? 'Secure Staff Sign In' : mode === 'signin' ? 'Welcome Back' : 'Create Approved Account'}
+            </CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              {mode === 'signin' ? 'Sign in to your account' : 'Only approved internal email addresses can create accounts'}
+              {provider === 'auth0'
+                ? 'Continue with your approved Auth0 staff account.'
+                : mode === 'signin' ? 'Sign in to your account' : 'Only approved internal email addresses can create accounts'}
             </p>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            {provider === 'auth0' ? (
+              <div className="space-y-4">
+                <Button type="button" className="w-full" disabled={loading} onClick={() => void handleAuth0SignIn()}>
+                  {loading ? 'Redirecting securely...' : 'Continue with secure sign-in'}
+                </Button>
+                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-700 dark:text-blue-400">
+                  <p className="font-medium mb-1">Restricted Access</p>
+                  <p className="text-xs">{approvedAccessMessage}</p>
+                </div>
+                {accessIssue && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                    <p className="font-medium mb-1">Access Check</p>
+                    <p className="text-xs">{accessIssue}</p>
+                  </div>
+                )}
+              </div>
+            ) : <form onSubmit={handleSubmit} className="space-y-4">
               {mode === 'signup' && (
                 <>
                   <div className="space-y-2">
@@ -361,7 +398,7 @@ export default function Login() {
                   <p className="text-xs">{accessIssue}</p>
                 </div>
               )}
-            </form>
+            </form>}
             <div className="mt-3 text-center">
               <Link to="/" className="text-xs text-muted-foreground hover:text-foreground">← Back to home</Link>
             </div>

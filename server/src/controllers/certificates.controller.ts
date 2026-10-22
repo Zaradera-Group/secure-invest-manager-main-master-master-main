@@ -4,6 +4,16 @@ import { CertificatesService } from "../services/certificates.service.js";
 
 const service = new CertificatesService();
 
+const getDashboardScope = (value: unknown): "staff" | "executive" | "all" => {
+  if (value === "executive" || value === "all") return value;
+  return "staff";
+};
+
+const getBoundedLimit = (value: unknown, fallback: number, maximum: number) => {
+  const parsed = typeof value === "string" ? Number.parseInt(value, 10) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
+};
+
 const getRouteParam = (value: string | string[] | undefined) => {
   if (typeof value === "string") {
     return value;
@@ -70,6 +80,40 @@ export const getLatestCertificateByInvestor = async (request: Request, response:
     );
 
     response.json(certificate);
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const getCertificateInbox = async (request: Request, response: Response) => {
+  try {
+    const scope = getDashboardScope(request.query.scope);
+    const limit = getBoundedLimit(request.query.limit, 6, 25);
+    response.json(await service.getCertificateInbox(request.authUser!, scope, limit));
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const getPendingApprovalCount = async (request: Request, response: Response) => {
+  try {
+    response.json({ count: await service.getPendingApprovalCount(request.authUser!, getDashboardScope(request.query.scope)) });
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const listCertificates = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.listCertificatesForRead(request.authUser!));
+  } catch (error) {
+    handleError(response, error);
+  }
+};
+
+export const getCertificateApprovalEvents = async (request: Request, response: Response) => {
+  try {
+    response.json(await service.getCertificateApprovalEvents(getRouteParam(request.params.id), request.authUser!));
   } catch (error) {
     handleError(response, error);
   }

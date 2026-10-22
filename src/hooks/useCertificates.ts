@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
 import type { Database } from '@/integrations/supabase/types';
 
 type AppRole = Database['public']['Enums']['app_role'];
@@ -62,6 +63,10 @@ export type CertificateInboxItem = {
   };
   nextActionLabel: string;
   href: string;
+};
+
+export type CertificateListRow = WorkflowCertificate & {
+  investor_category?: string | null;
 };
 
 type WorkflowInvestor = {
@@ -133,14 +138,15 @@ export function useCertificateApprovalEvents(certificateId?: string) {
         throw new Error('Certificate id is required to load workflow notifications.');
       }
 
-      const { data, error } = await supabase
-        .from('notifications' as never)
-        .select('*')
-        .eq('certificate_id', certificateId)
-        .order('created_at', { ascending: false });
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) throw new Error('Failed to load session. Please sign in again.');
 
-      if (error) throw error;
-      return (data ?? []) as Array<{
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates/${encodeURIComponent(certificateId)}/approval-events`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = parseJsonSafely(await response.text());
+      if (!response.ok) throw new Error(data?.error ?? data?.message ?? 'Failed to load certificate approval events.');
+      return (Array.isArray(data) ? data : []) as Array<{
         id: string;
         user_role: string;
         message: string;
@@ -151,9 +157,30 @@ export function useCertificateApprovalEvents(certificateId?: string) {
   });
 }
 
+export function useCertificatesList() {
+  const { role } = useAuth();
+
+  return useQuery({
+    queryKey: ['certificates-list', role],
+    enabled: !!role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role),
+    queryFn: async () => {
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) throw new Error('Failed to load session. Please sign in again.');
+
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = parseJsonSafely(await response.text());
+      if (!response.ok) throw new Error(data?.error ?? data?.message ?? 'Failed to load certificates.');
+      return (Array.isArray(data) ? data : []) as CertificateListRow[];
+    },
+    refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
+  });
+}
+
 export function useManageInvestorCertificate() {
   const queryClient = useQueryClient();
-  const { user, role, mfaRequired, mfaVerified, ensureFreshSession, refreshMfaStatus } = useAuth();
+  const { provider, user, role, mfaRequired, mfaVerified, ensureFreshSession, refreshMfaStatus } = useAuth();
 
   return useMutation({
     mutationFn: async (payload: {
@@ -169,6 +196,7 @@ export function useManageInvestorCertificate() {
       }
 
       await ensureCertificateMfaReady({
+        provider,
         mfaRequired,
         mfaVerified,
         ensureFreshSession,
@@ -324,184 +352,44 @@ export async function openCertificatePreviewInNewTab(certificateId: string) {
 }
 
 export function useCertificateInbox(scope: DashboardScope = 'staff') {
-  const { role, user } = useAuth();
+  const { role } = useAuth();
 
   return useQuery({
-    queryKey: ['certificate-inbox', role, user?.id, scope],
+    queryKey: ['certificate-inbox', role, scope],
     enabled: !!role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role),
     queryFn: async () => {
-      if (!role) {
-        return [] as CertificateInboxItem[];
-      }
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) throw new Error('Failed to load session. Please sign in again.');
 
-      const statusesByRole: Partial<Record<AppRole, WorkflowCertificateStatus[]>> = {
-        investment_manager: ['pending_manager', 'approved'],
-        accountant: ['pending_manager', 'approved'],
-        general_manager: ['pending_general_manager', 'approved'],
-        super_admin: ['pending_ceo'],
-        admin: ['pending_manager', 'pending_general_manager', 'pending_ceo', 'approved'],
-      };
-
-      const statuses = statusesByRole[role];
-      if (!statuses?.length) {
-        return [] as CertificateInboxItem[];
-      }
-
-      let query = supabase
-        .from('certificates' as never)
-        .select('*')
-        .in('status', statuses)
-        .order('created_at', { ascending: false })
-        .limit(6);
-
-      if (isExecutiveRole(role) && user?.id) {
-        if (scope === 'executive') {
-          query = query.eq('created_by', user.id);
-        } else if (scope === 'staff') {
-          query = query.neq('created_by', user.id);
-        }
-      }
-
-      const { data: certificates, error } = await query;
-
-      if (error) throw error;
-
-      let certificateRows = (certificates ?? []) as unknown as WorkflowCertificate[];
-      if (isManagerEquivalentRole(role) && user?.id) {
-        certificateRows = certificateRows.filter((certificate) =>
-          certificate.status === 'pending_manager' || certificate.status === 'approved' || certificate.created_by === user.id,
-        );
-      }
-      if (role === 'general_manager' && user?.id) {
-        certificateRows = certificateRows.filter((certificate) =>
-          certificate.status === 'pending_general_manager' || certificate.created_by === user.id,
-        );
-      }
-      const investorIds = [...new Set(certificateRows.map((certificate) => certificate.investor_id).filter((value): value is string => Boolean(value)))];
-      const investorEmails = [...new Set(certificateRows.map((certificate) => certificate.investor_email.toLowerCase()))];
-      const [investorsByIdResult, investorsByEmailResult] = await Promise.all([
-        investorIds.length
-          ? supabase
-              .from('investors')
-              .select('id, name, email, investor_category')
-              .in('id', investorIds)
-          : Promise.resolve({ data: [], error: null } as const),
-        investorEmails.length
-          ? supabase
-              .from('investors')
-              .select('id, name, email, investor_category')
-              .in('email', investorEmails)
-          : Promise.resolve({ data: [], error: null } as const),
-      ]);
-
-      if (investorsByIdResult.error) throw investorsByIdResult.error;
-      if (investorsByEmailResult.error) throw investorsByEmailResult.error;
-
-      const investors = [...(investorsByIdResult.data ?? []), ...(investorsByEmailResult.data ?? [])];
-
-      const investorMap = new Map<string, { id: string; name: string; email: string; investor_category: string | null }>();
-      ((investors ?? []) as Array<{ id: string; name: string; email: string; investor_category: string | null }>).forEach((investor) => {
-        investorMap.set(investor.id, investor);
-        investorMap.set(`${investor.email.toLowerCase()}::${investor.name}`, investor);
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates/inbox?${new URLSearchParams({ scope, limit: '6' })}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
       });
-
-      return certificateRows.map((certificate) => {
-        const matchedInvestor =
-          investorMap.get((certificate as WorkflowCertificate & { investor_id?: string | null }).investor_id ?? '')
-          ?? investorMap.get(`${certificate.investor_email.toLowerCase()}::${certificate.investor_name}`);
-
-        return {
-        certificate,
-        investor: {
-          id: matchedInvestor?.id,
-          name: certificate.investor_name,
-          email: certificate.investor_email,
-          category: matchedInvestor?.investor_category ?? null,
-        },
-        nextActionLabel: getNextActionLabel(role, certificate),
-        href: matchedInvestor?.id ? `/investors/${matchedInvestor.id}` : '/certificates',
-        };
-      }) satisfies CertificateInboxItem[];
+      const data = parseJsonSafely(await response.text());
+      if (!response.ok) throw new Error(data?.error ?? data?.message ?? 'Failed to load certificate inbox.');
+      return (Array.isArray(data) ? data : []) as CertificateInboxItem[];
     },
     refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
   });
 }
 
 export function usePendingApprovals(scope: DashboardScope = 'staff') {
-  const { user, role } = useAuth();
+  const { role } = useAuth();
 
   return useQuery({
-    queryKey: ['pending-approvals', user?.id, role, scope],
-    enabled: !!user?.id && !!role,
+    queryKey: ['pending-approvals', role, scope],
+    enabled: !!role && ['investment_manager', 'accountant', 'general_manager', 'super_admin', 'admin'].includes(role),
     queryFn: async () => {
-      if (!role) return 0;
+      const accessToken = await getActiveAccessToken();
+      if (!accessToken) throw new Error('Failed to load session. Please sign in again.');
 
-      let statusFilter: WorkflowCertificateStatus[] = [];
-      if (isManagerEquivalentRole(role)) {
-        statusFilter = ['pending_manager', 'approved'];
-      } else if (role === 'general_manager') {
-        statusFilter = ['pending_general_manager', 'approved'];
-      } else if (role === 'admin') {
-        statusFilter = ['pending_manager', 'pending_general_manager', 'pending_ceo', 'approved'];
-      } else if (isExecutiveRole(role)) {
-        statusFilter = ['pending_ceo'];
-      } else {
-        return 0;
-      }
-
-      let query = supabase
-        .from('certificates' as never)
-        .select('id,status,created_by')
-        .in('status', statusFilter);
-
-      if (isExecutiveRole(role) && user?.id) {
-        if (scope === 'executive') {
-          query = query.eq('created_by', user.id);
-        } else if (scope === 'staff') {
-          query = query.neq('created_by', user.id);
-        }
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      const rows = ((data ?? []) as Array<{ id: string; status: WorkflowCertificateStatus; created_by?: string | null }>)
-        .filter((certificate) => {
-          if (isManagerEquivalentRole(role)) {
-            return certificate.status === 'pending_manager' || certificate.status === 'approved' || certificate.created_by === user?.id;
-          }
-
-          if (role === 'general_manager') {
-            return certificate.status === 'pending_general_manager' || certificate.created_by === user?.id;
-          }
-
-          return true;
-        });
-
-      return rows.length;
+      const response = await fetch(`${CERTIFICATE_API_URL}/certificates/pending-approval-count?${new URLSearchParams({ scope })}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = parseJsonSafely(await response.text());
+      if (!response.ok) throw new Error(data?.error ?? data?.message ?? 'Failed to load pending approvals.');
+      return Number((data as { count?: number } | null)?.count ?? 0);
     },
     refetchInterval: CERTIFICATE_REFETCH_INTERVAL_MS,
-  });
-}
-
-export function useUpdateAvailability() {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (isAvailable: boolean) => {
-      if (!user) throw new Error('Not authenticated');
-
-      const { error } = await supabase
-        .from('user_roles' as never)
-        .update({ is_available_for_approvals: isAvailable } as never)
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-roles'] });
-    },
   });
 }
 
@@ -564,42 +452,6 @@ function getRequestBody(payload: {
     : {};
 }
 
-function getNextActionLabel(role: AppRole, certificate: WorkflowCertificate) {
-  if (isManagerEquivalentRole(role) && certificate.status === 'pending_manager') {
-    return 'Review and sign';
-  }
-
-  if (role === 'admin' && certificate.status === 'pending_manager') {
-    return 'Sign as Investment Manager';
-  }
-
-  if (isManagerEquivalentRole(role) && certificate.status === 'approved') {
-    return 'Send to investor';
-  }
-
-  if (role === 'admin' && certificate.status === 'approved') {
-    return 'Send to investor';
-  }
-
-  if (role === 'general_manager' && certificate.status === 'pending_general_manager') {
-    return 'Approve and sign';
-  }
-
-  if (role === 'general_manager' && certificate.status === 'approved') {
-    return 'Send to investor';
-  }
-
-  if (role === 'admin' && certificate.status === 'pending_general_manager') {
-    return 'Sign as General Manager';
-  }
-
-  if (isExecutiveRole(role) && certificate.status === 'pending_ceo') {
-    return 'Final approval';
-  }
-
-  return 'Review certificate';
-}
-
 function getSuccessMessage(action: CertificateAction) {
   switch (action) {
     case 'generate':
@@ -618,6 +470,7 @@ function getSuccessMessage(action: CertificateAction) {
 }
 
 async function ensureCertificateMfaReady(input: {
+  provider: 'supabase' | 'auth0';
   mfaRequired: boolean;
   mfaVerified: boolean;
   ensureFreshSession: () => Promise<unknown>;
@@ -625,6 +478,10 @@ async function ensureCertificateMfaReady(input: {
 }) {
   if (!input.mfaRequired || input.mfaVerified) {
     return;
+  }
+
+  if (input.provider === 'auth0') {
+    throw new Error('Complete the Auth0 multi-factor authentication challenge before you perform certificate actions.');
   }
 
   await input.ensureFreshSession();
@@ -644,12 +501,7 @@ async function ensureCertificateMfaReady(input: {
 }
 
 async function getActiveAccessToken() {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) {
-    throw sessionError;
-  }
-
-  return sessionData.session?.access_token ?? null;
+  return getBackendAccessToken();
 }
 
 async function callCertificateApiWithParsedResponse(endpoint: string, requestBody: unknown, accessToken: string) {

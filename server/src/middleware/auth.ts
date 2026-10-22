@@ -2,7 +2,13 @@ import type { NextFunction, Request, Response } from "express";
 import { Auth0AuthenticationError, getUserFromAuth0BearerToken, isAuth0Enabled } from "../lib/auth0.js";
 import { getUserFromBearerToken, isSupabaseTimeoutError } from "../lib/supabase.js";
 import { env } from "../config/env.js";
+import {
+  Auth0StaffAccountMappingError,
+  Auth0StaffAccountService,
+} from "../services/auth0-staff-account.service.js";
 import type { AppRole } from "../types/certificates.js";
+
+const auth0StaffAccounts = new Auth0StaffAccountService();
 
 const extractBearerToken = (request: Request): string | null => {
   const authorization = request.headers.authorization;
@@ -80,6 +86,64 @@ export const requireDualAuth = async (request: Request, response: Response, next
       message: error instanceof Error ? error.message : "Unauthorized",
     });
   }
+};
+
+// Only the Auth0 readiness endpoint requires a previously validated MongoDB staff mapping.
+// Existing Supabase sessions still use the normal fallback in dual-auth mode.
+export const requireMappedDualAuth = async (request: Request, response: Response, next: NextFunction) => {
+  try {
+    const token = extractBearerToken(request);
+
+    if (!token) {
+      response.status(401).json({ message: "Missing bearer token" });
+      return;
+    }
+
+    if (isAuth0Enabled()) {
+      try {
+        const auth0User = await getUserFromAuth0BearerToken(token);
+        request.authUser = await auth0StaffAccounts.resolveMappedActiveUser(auth0User);
+        next();
+        return;
+      } catch (error) {
+        if (error instanceof Auth0StaffAccountMappingError) {
+          throw error;
+        }
+
+        if (!(error instanceof Auth0AuthenticationError)) {
+          throw error;
+        }
+
+        if (env.AUTH_MODE === "auth0") {
+          throw error;
+        }
+      }
+    }
+
+    request.authUser = await getUserFromBearerToken(token);
+    next();
+  } catch (error) {
+    if (isSupabaseTimeoutError(error)) {
+      response.status(503).json({
+        message: "Authentication is temporarily unavailable. Please try again shortly.",
+      });
+      return;
+    }
+
+    response.status(401).json({
+      message: error instanceof Error ? error.message : "Unauthorized",
+    });
+  }
+};
+
+// Workflow routes remain Supabase-only until the frontend cutover is intentionally enabled.
+// Once enabled, Auth0 tokens must pass both JWT validation and the canonical MongoDB staff mapping.
+export const requireWorkflowAuth = (request: Request, response: Response, next: NextFunction) => {
+  if (!env.AUTH0_WORKFLOW_ACCESS_ENABLED) {
+    return requireAuth(request, response, next);
+  }
+
+  return requireMappedDualAuth(request, response, next);
 };
 
 export const requireRole = (...roles: AppRole[]) => {

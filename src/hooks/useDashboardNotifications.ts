@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { getBackendAccessToken } from '@/lib/backendAccessToken';
+
+const NOTIFICATIONS_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+const NOTIFICATION_REFRESH_INTERVAL_MS = 30_000;
 
 type WorkflowNotificationRole = 'manager' | 'general_manager' | 'ceo' | 'investor';
 
@@ -49,68 +51,61 @@ function mapNotificationRecord(notification: Record<string, unknown>): WorkflowN
   };
 }
 
+async function callNotificationsBackend<T>(path: string, method: 'GET' | 'PATCH') {
+  const token = await getBackendAccessToken('You must be signed in to perform this action.');
+
+  const response = await fetch(`${NOTIFICATIONS_API_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (response.status === 204) return undefined as T;
+
+  const raw = await response.text();
+  let payload: { message?: string } | T | null = null;
+  if (raw) {
+    try {
+      payload = JSON.parse(raw) as { message?: string } | T;
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    const message = typeof payload === 'object' && payload && 'message' in payload ? payload.message : null;
+    throw new Error(message ?? 'Notification request failed.');
+  }
+
+  return payload as T;
+}
+
 export function useDashboardNotifications(limit = 20) {
   const { user, role } = useAuth();
   const userId = user?.id ?? null;
-  const userEmail = user?.email?.toLowerCase() ?? null;
-  useRealtimeNotificationInvalidation(user?.id, user?.email ?? null, role ?? null);
 
   return useQuery({
     queryKey: ['dashboard-notifications', user?.id, user?.email, role, limit],
     enabled: !!userId && !!role,
     queryFn: async () => {
-      const notificationRole = mapAppRoleToNotificationRole(role);
-      if (!notificationRole || !userId) return [];
-
-      let query = supabase
-        .from('notifications' as never)
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      if (notificationRole === 'investor') {
-        query = query.or(`recipient_user_id.eq.${userId},recipient_email.eq.${userEmail}`);
-      } else {
-        query = query.or(`recipient_user_id.eq.${userId},user_role.eq.${notificationRole}`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      return ((data ?? []) as Array<Record<string, unknown>>).map(mapNotificationRecord);
+      const records = await callNotificationsBackend<Array<Record<string, unknown>>>(`/notifications/dashboard?limit=${limit}`, 'GET');
+      return records.map(mapNotificationRecord);
     },
+    refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
   });
 }
 
 export function useUnreadDashboardNotificationCount() {
   const { user, role } = useAuth();
   const userId = user?.id ?? null;
-  const userEmail = user?.email?.toLowerCase() ?? null;
-  useRealtimeNotificationInvalidation(user?.id, user?.email ?? null, role ?? null);
 
   return useQuery({
     queryKey: ['dashboard-notifications-unread-count', user?.id, user?.email, role],
     enabled: !!userId && !!role,
     queryFn: async () => {
-      const notificationRole = mapAppRoleToNotificationRole(role);
-      if (!notificationRole || !userId) return 0;
-
-      let query = supabase
-        .from('notifications' as never)
-        .select('*', { count: 'exact', head: true })
-        .eq('is_read', false);
-
-      if (notificationRole === 'investor') {
-        query = query.or(`recipient_user_id.eq.${userId},recipient_email.eq.${userEmail}`);
-      } else {
-        query = query.or(`recipient_user_id.eq.${userId},user_role.eq.${notificationRole}`);
-      }
-
-      const { count, error } = await query;
-
-      if (error) throw error;
-      return count ?? 0;
+      const result = await callNotificationsBackend<{ count: number }>('/notifications/dashboard/unread-count', 'GET');
+      return result.count;
     },
+    refetchInterval: NOTIFICATION_REFRESH_INTERVAL_MS,
   });
 }
 
@@ -119,12 +114,7 @@ export function useMarkDashboardNotificationRead() {
 
   return useMutation({
     mutationFn: async (notificationId: string) => {
-      const { error } = await supabase
-        .from('notifications' as never)
-        .update({ is_read: true } as never)
-        .eq('id', notificationId);
-
-      if (error) throw error;
+      await callNotificationsBackend<void>(`/notifications/dashboard/${notificationId}/read`, 'PATCH');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dashboard-notifications'] });
@@ -139,90 +129,12 @@ export function useMarkAllDashboardNotificationsRead() {
 
   return useMutation({
     mutationFn: async () => {
-      const notificationRole = mapAppRoleToNotificationRole(role);
-      if (!user?.id || !notificationRole) return;
-
-      let query = supabase
-        .from('notifications' as never)
-        .update({ is_read: true } as never)
-        .eq('is_read', false);
-
-      if (notificationRole === 'investor') {
-        query = query.or(`recipient_user_id.eq.${user.id},recipient_email.eq.${user.email?.toLowerCase()}`);
-      } else {
-        query = query.or(`recipient_user_id.eq.${user.id},user_role.eq.${notificationRole}`);
-      }
-
-      const { error } = await query;
-
-      if (error) throw error;
+      if (!user?.id || !role) return;
+      await callNotificationsBackend<void>('/notifications/dashboard/read-all', 'PATCH');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dashboard-notifications'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-notifications-unread-count'] });
     },
   });
-}
-
-function useRealtimeNotificationInvalidation(userId?: string, email?: string | null, role?: string | null) {
-  const queryClient = useQueryClient();
-  const channelNameRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!userId || !role) return;
-
-    if (!channelNameRef.current) {
-      const uniqueSuffix =
-        typeof globalThis.crypto?.randomUUID === 'function'
-          ? globalThis.crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-      channelNameRef.current = `workflow-notifications-${userId}-${uniqueSuffix}`;
-    }
-
-    const channelName = channelNameRef.current;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
-        (payload) => {
-          const record = (payload.new ?? payload.old) as Partial<WorkflowNotification> | null;
-          if (!record) return;
-
-          const notificationRole = mapAppRoleToNotificationRole(role);
-          const matchesUser = record.recipient_user_id === userId;
-          const matchesEmail = !!email && record.recipient_email?.toLowerCase() === email.toLowerCase();
-          const matchesRole = notificationRole ? record.user_role === notificationRole : false;
-
-          if (matchesUser || matchesEmail || matchesRole) {
-            queryClient.invalidateQueries({ queryKey: ['dashboard-notifications'] });
-            queryClient.invalidateQueries({ queryKey: ['dashboard-notifications-unread-count'] });
-          }
-        },
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [email, queryClient, role, userId]);
-
-  useEffect(() => {
-    channelNameRef.current = null;
-  }, [userId, role]);
-}
-
-function mapAppRoleToNotificationRole(role: string | null): WorkflowNotificationRole | null {
-  switch (role) {
-    case 'investment_manager':
-    case 'accountant':
-      return 'manager';
-    case 'general_manager':
-      return 'general_manager';
-    case 'super_admin':
-      return 'ceo';
-    default:
-      return 'investor';
-  }
 }

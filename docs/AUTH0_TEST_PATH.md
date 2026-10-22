@@ -56,6 +56,7 @@ exports.onExecutePostLogin = async (event, api) => {
 
   api.idToken.setCustomClaim('https://zaraderavest.com/roles', roles);
   api.accessToken.setCustomClaim('https://zaraderavest.com/roles', roles);
+  api.accessToken.setCustomClaim('https://zaraderavest.com/email', event.user.email || '');
 
   if (isStaff) {
     api.multifactor.enable('any', { allowRememberBrowser: false });
@@ -91,7 +92,9 @@ AUTH0_AUDIENCE=https://api.zaraderavest.com
 AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
 ```
 
-`AUTH_MODE=dual` preserves the existing Supabase authentication flow. Auth0 tokens are accepted only by the read-only `/auth/me` readiness endpoint. Leave `AUTH_MODE=auth0` unset; it is reserved for a later, planned cutover.
+`AUTH_MODE=dual` preserves the existing Supabase authentication flow. Auth0 tokens are accepted only by the read-only `/auth/me` readiness endpoint, after their MongoDB `staff_accounts` mapping has been verified. Leave `AUTH_MODE=auth0` unset; it is reserved for a later, planned cutover.
+
+`AUTH0_WORKFLOW_ACCESS_ENABLED=false` keeps every live workflow route Supabase-only. Set it to `true` only after the browser login has been moved to Auth0 and the end-to-end cutover test is scheduled. When enabled with `AUTH_MODE=dual`, mapped Auth0 staff identities and existing Supabase sessions can both access workflow routes; with `AUTH_MODE=auth0`, only mapped Auth0 identities can do so.
 
 ## 6. Acceptance test
 
@@ -100,6 +103,8 @@ AUTH0_ROLES_CLAIM=https://zaraderavest.com/roles
 3. Open `/auth0-test` and sign in.
 4. Confirm Auth0 prompts for MFA.
 5. Confirm the page reports `Email verified: Yes`, the expected role, and `Staff access claim: Recognized`.
-6. Confirm the user cannot access live investor or certificate data through this route.
+6. Select **Link Auth0 account to staff record**. It succeeds only when the Auth0 email and single role match an active Zaradera allowlist record and the same email already has the same role in the live Zaradera staff account. This creates the MongoDB `staff_accounts` mapping, including the canonical internal staff ID.
+7. Select **Validate Render identity** and confirm that Render accepts the mapped Auth0 identity. Render will use the canonical internal staff ID, preserving existing creator ownership and notification scope for a later rollout.
+8. Confirm the user cannot access live investor or certificate data through this route.
 
 Only after that test passes should we add Auth0 JWT validation to the Render API and implement a controlled parallel sign-in rollout.

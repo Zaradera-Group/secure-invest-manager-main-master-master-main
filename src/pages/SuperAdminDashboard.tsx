@@ -4,58 +4,34 @@ import { Link } from 'react-router-dom';
 import Dashboard from './Dashboard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import type { Database } from '@/integrations/supabase/types';
-import { supabase } from '@/integrations/supabase/client';
 import { PublicIntakeLinkCard } from '@/components/public-intake/PublicIntakeLinkCard';
+import { getBackendAuthorizationHeaders } from '@/lib/backendAccessToken';
+
+const ADMIN_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL ?? 'http://localhost:4000';
+
+async function callAdminBackend<T>(path: string): Promise<T> {
+  const response = await fetch(`${ADMIN_API_URL}${path}`, {
+    headers: await getBackendAuthorizationHeaders('You must be signed in to view executive oversight data.'),
+  });
+  const payload = await response.json().catch(() => null) as { message?: string } | T | null;
+  if (!response.ok) {
+    const message = typeof payload === 'object' && payload && 'message' in payload ? payload.message : null;
+    throw new Error(message ?? 'Failed to load executive oversight data.');
+  }
+  return payload as T;
+}
 
 export default function SuperAdminDashboard() {
   const { data: creatorDirectory = new Map<string, { displayName: string; roleLabel: string }>() } = useQuery({
     queryKey: ['super-admin-creator-directory'],
     queryFn: async () => {
-      const [profilesResult, rolesResult] = await Promise.all([
-        supabase.from('profiles').select('id, full_name'),
-        supabase.from('user_roles').select('user_id, role'),
-      ]);
-
-      if (profilesResult.error) throw profilesResult.error;
-      if (rolesResult.error) throw rolesResult.error;
-
-      const profileMap = new Map(
-        ((profilesResult.data ?? []) as Pick<Database['public']['Tables']['profiles']['Row'], 'id' | 'full_name'>[])
-          .map((profile) => [profile.id, profile.full_name?.trim() || null]),
-      );
-
-      return new Map(
-        ((rolesResult.data ?? []) as Pick<Database['public']['Tables']['user_roles']['Row'], 'user_id' | 'role'>[])
-          .map((roleRow) => {
-            const roleLabel = formatRoleLabel(roleRow.role);
-            const fullName = profileMap.get(roleRow.user_id);
-
-            return [
-              roleRow.user_id,
-              {
-                displayName: fullName || roleLabel,
-                roleLabel,
-              },
-            ];
-          }),
-      );
+      const directory = await callAdminBackend<Array<{ userId: string; displayName: string; roleLabel: string }>>('/admin/overview/creator-directory');
+      return new Map(directory.map((member) => [member.userId, member]));
     },
   });
   const { data: roleCounts = {} as Record<string, number> } = useQuery<Record<string, number>>({
     queryKey: ['super-admin-role-counts'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('user_roles')
-        .select('role');
-
-      if (error) throw error;
-
-      return (data ?? []).reduce<Record<string, number>>((acc, item) => {
-        acc[item.role] = (acc[item.role] ?? 0) + 1;
-        return acc;
-      }, {});
-    },
+    queryFn: () => callAdminBackend<Record<string, number>>('/admin/overview/role-counts'),
   });
   const { data: recentInvestorActivity = [] } = useQuery<Array<{
     id: string;
@@ -66,34 +42,7 @@ export default function SuperAdminDashboard() {
     investorName: string;
   }>>({
     queryKey: ['super-admin-investor-activity'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('audit_logs' as never)
-        .select('id, action, created_at, user_id, record_id, new_data, old_data')
-        .eq('table_name', 'investors')
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-
-      return ((data ?? []) as Array<Record<string, unknown>>).map((item) => {
-        const newData = item.new_data as Record<string, unknown> | null;
-        const oldData = item.old_data as Record<string, unknown> | null;
-        const investorName =
-          (typeof newData?.name === 'string' && newData.name)
-          || (typeof oldData?.name === 'string' && oldData.name)
-          || 'Unknown investor';
-
-        return {
-          id: String(item.id ?? ''),
-          action: String(item.action ?? 'UNKNOWN'),
-          created_at: String(item.created_at ?? ''),
-          user_id: typeof item.user_id === 'string' ? item.user_id : null,
-          record_id: typeof item.record_id === 'string' ? item.record_id : null,
-          investorName,
-        };
-      });
-    },
+    queryFn: () => callAdminBackend('/admin/overview/investor-activity?limit=10'),
   });
 
   const staffCount =
@@ -176,27 +125,6 @@ export default function SuperAdminDashboard() {
       />
     </div>
   );
-}
-
-function formatRoleLabel(role: string | null | undefined) {
-  switch (role) {
-    case 'investment_manager':
-      return 'Investment Manager';
-    case 'accountant':
-      return 'Accountant';
-    case 'general_manager':
-      return 'General Manager';
-    case 'admin':
-      return 'IT Manager';
-    case 'super_admin':
-      return 'CEO';
-    case 'software_engineer':
-      return 'Software Engineer';
-    case 'staff':
-      return 'Staff';
-    default:
-      return 'Staff';
-  }
 }
 
 function formatActorLabel(

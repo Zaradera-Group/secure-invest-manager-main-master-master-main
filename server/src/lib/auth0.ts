@@ -8,6 +8,8 @@ const supportedRoles = new Set<AppRole>([
   "general_manager",
   "super_admin",
   "admin",
+  "software_engineer",
+  "staff",
 ]);
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
@@ -61,11 +63,22 @@ const toAuthenticatedUser = (payload: JWTPayload): AuthenticatedUser => {
 
   return {
     id: subject,
-    email: typeof payload.email === "string" ? payload.email : "",
+    email: readEmail(payload),
     role: matchingRoles[0],
     provider: "auth0",
     permissions: readStringArray(payload.permissions),
   };
+};
+
+const readEmail = (payload: JWTPayload) => {
+  const claimEmail = payload[env.AUTH0_EMAIL_CLAIM];
+  const email = typeof claimEmail === "string"
+    ? claimEmail
+    : typeof payload.email === "string"
+      ? payload.email
+      : "";
+
+  return email.trim().toLowerCase();
 };
 
 const readStringArray = (value: unknown): string[] => (

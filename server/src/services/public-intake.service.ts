@@ -1,11 +1,32 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { adminSupabase } from "../lib/supabase.js";
 import { canSendEmail, sendPlainEmail } from "../lib/email.js";
 import { env } from "../config/env.js";
 import { verifyTurnstileToken } from "../lib/turnstile.js";
 import { createPublicIntakeConsentToken, verifyPublicIntakeConsentToken } from "../lib/public-intake-consent.js";
-import { mirrorPublicIntakeRequestToMongoSafely } from "../repositories/public-intake.mongo.js";
-import { mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import {
+  deletePublicIntakeRequestFromMongo,
+  deletePublicIntakeRequestFromMongoSafely,
+  createPublicIntakeRequestInMongo,
+  getPublicIntakeRequestFromMongo,
+  listPublicIntakeRequestsFromMongo,
+  mirrorPublicIntakeRequestToMongo,
+  mirrorPublicIntakeRequestToMongoSafely,
+  updatePublicIntakeRequestInMongo,
+} from "../repositories/public-intake.mongo.js";
+import {
+  consumePublicIntakeOtpInMongo,
+  createPublicIntakeOtpInMongo,
+  getLatestActivePublicIntakeOtpFromMongo,
+  incrementPublicIntakeOtpAttemptInMongo,
+  type PublicIntakeOtpRecord,
+} from "../repositories/public-intake-otp.mongo.js";
+import { isMongoConfigured } from "../lib/mongodb.js";
+import { getStaffContactFromMongo, listActiveStaffContactsByRoles } from "../repositories/staff-contacts.mongo.js";
+import type { AuthenticatedUser } from "../types/certificates.js";
+import { createNativeDashboardNotification, mirrorNotificationToMongoSafely } from "../repositories/notifications.mongo.js";
+import { enqueueNotificationDelivery } from "../repositories/notification-delivery-outbox.mongo.js";
 import {
   createOtpExpiryDate,
   generatePublicIntakeOtpCode,
@@ -55,6 +76,118 @@ type IntakeRequestContext = {
   ip?: string | null;
   userAgent?: string | null;
 };
+
+const intakeReviewSchema = z.object({
+  status: z.enum(["submitted", "reviewed", "archived", "rejected"]),
+  reviewNotes: z.string().trim().max(5_000).nullable().optional(),
+});
+
+export async function listPublicIntakeRequests() {
+  const requiresMongo = env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo";
+  if (requiresMongo && !isMongoConfigured()) {
+    throw new Error("MongoDB is required for Mongo-primary public intake reads");
+  }
+
+  if (requiresMongo) {
+    try {
+      return await listPublicIntakeRequestsFromMongo();
+    } catch (error) {
+      throw new Error(`Failed to fetch public intake requests from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_requests")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(`Failed to fetch public intake requests: ${error.message}`);
+  return data ?? [];
+}
+
+export async function getPublicIntakeRequestForStaff(requestId: string) {
+  const requiresMongo = env.PUBLIC_INTAKE_MONGO_READ_MODE === "mongo";
+  if (requiresMongo && !isMongoConfigured()) {
+    throw new Error("MongoDB is required for Mongo-primary public intake reads");
+  }
+
+  if (requiresMongo) {
+    try {
+      const record = await getPublicIntakeRequestFromMongo(requestId);
+      if (record) return record;
+      throw new Error("Public intake request not found");
+    } catch (error) {
+      if (error instanceof Error && error.message === "Public intake request not found") throw error;
+      throw new Error(`Failed to fetch public intake request from MongoDB: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_requests")
+    .select("*")
+    .eq("id", requestId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to fetch public intake request: ${error.message}`);
+  if (!data) throw new Error("Public intake request not found");
+  return data;
+}
+
+export async function reviewPublicIntakeRequest(requestId: string, actor: AuthenticatedUser, input: unknown) {
+  const review = intakeReviewSchema.parse(input);
+  if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+    const reviewedAt = new Date().toISOString();
+    const data = await updatePublicIntakeRequestInMongo({
+      requestId,
+      status: review.status,
+      reviewedAt,
+      reviewedBy: actor.id,
+      reviewNotes: review.reviewNotes?.trim() || null,
+    });
+    if (!data) throw new Error("Public intake request not found");
+    return data;
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_requests")
+    .update({
+      status: review.status,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: actor.id,
+      review_notes: review.reviewNotes?.trim() || null,
+    })
+    .eq("id", requestId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to update public intake request: ${error.message}`);
+  if (!data) throw new Error("Public intake request not found");
+
+  mirrorPublicIntakeRequestToMongoSafely({
+    requestId,
+    intakeRecord: data as Record<string, unknown>,
+    requestRecord: data as Record<string, unknown>,
+    submittedAt: String(data.created_at ?? new Date().toISOString()),
+  });
+  return data;
+}
+
+export async function deletePublicIntakeRequest(requestId: string) {
+  if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+    const deleted = await deletePublicIntakeRequestFromMongo(requestId);
+    if (!deleted) throw new Error("Public intake request not found");
+    return;
+  }
+
+  const { error, count } = await adminSupabase
+    .from("public_intake_requests")
+    .delete({ count: "exact" })
+    .eq("id", requestId);
+
+  if (error) throw new Error(`Failed to delete public intake request: ${error.message}`);
+  if (!count) throw new Error("Public intake request not found");
+  deletePublicIntakeRequestFromMongoSafely(requestId);
+}
 
 export async function createPublicInvestorIntake(payload: unknown, context: IntakeRequestContext = {}) {
   const input = publicInvestorIntakeSchema.parse(payload);
@@ -113,24 +246,33 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
     submitted_user_agent: context.userAgent ?? null,
   };
 
-  const { data: requestRecord, error } = await adminSupabase
-    .from("public_intake_requests")
-    .insert(intakeRecord)
-    .select("*")
-    .single();
+  const submittedAt = new Date().toISOString();
+  const requestId = randomUUID();
+  let requestRecord: Record<string, unknown>;
+  if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+    requestRecord = await createPublicIntakeRequestInMongo({ requestId, intakeRecord, submittedAt });
+  } else {
+    const { data, error } = await adminSupabase
+      .from("public_intake_requests")
+      .insert(intakeRecord)
+      .select("*")
+      .single();
 
-  if (error || !requestRecord) {
-    throw new Error(`Failed to create public intake request: ${error?.message ?? "Unknown error"}`);
+    if (error || !data) {
+      throw new Error(`Failed to create public intake request: ${error?.message ?? "Unknown error"}`);
+    }
+    requestRecord = data as Record<string, unknown>;
   }
 
-  const requestId = requestRecord.id as string;
-  const submittedAt = new Date().toISOString();
-  mirrorPublicIntakeRequestToMongoSafely({
+  const mongoMirrorInput = {
     requestId,
     intakeRecord,
     requestRecord: requestRecord as Record<string, unknown>,
     submittedAt,
-  });
+  };
+  if (env.PUBLIC_INTAKE_WRITE_MODE !== "mongo") {
+    mirrorPublicIntakeRequestToMongoSafely(mongoMirrorInput);
+  }
 
   const notificationPayload = buildPublicIntakeNotificationPayload({
     investor: input,
@@ -155,23 +297,50 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
         action_path: "/public-intake-inbox",
         is_read: false,
       };
-      const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
-
-      if (error || !data) {
-        throw new Error(`Failed to create dashboard notification: ${error?.message ?? "Unknown error"}`);
+      if (env.PUBLIC_INTAKE_WRITE_MODE === "mongo") {
+        await createNativeDashboardNotification({
+          dedupeKey: `public-intake:${requestId}:${recipient.role}:${recipient.email}`,
+          recipientUserId: recipient.userId ?? "",
+          recipientEmail: recipient.email,
+          userRole: recipient.role,
+          investorId: requestId,
+          title: notification.title,
+          detail: notification.detail,
+          actionPath: notification.action_path,
+        });
+        return;
       }
 
-      mirrorNotificationToMongoSafely({
-        notificationId: String(data.id),
-        notification: data as Record<string, unknown>,
-        createdAt: String(data.created_at ?? submittedAt),
-      });
+      const { data, error } = await adminSupabase.from("notifications").insert(notification).select("*").single();
+      if (error || !data) throw new Error(`Failed to create dashboard notification: ${error?.message ?? "Unknown error"}`);
+      mirrorNotificationToMongoSafely({ notificationId: String(data.id), notification: data as Record<string, unknown>, createdAt: String(data.created_at ?? submittedAt) });
     }),
   );
 
   const failedNotifications = notificationResults.filter((result) => result.status === "rejected");
   if (failedNotifications.length > 0) {
     console.warn("[public-intake] One or more dashboard notifications failed:", failedNotifications.length);
+  }
+
+  if (env.PUBLIC_INTAKE_EMAIL_DELIVERY_AUTHORITY === "render") {
+    try {
+      // The worker renders from the mirrored record instead of duplicating sensitive form content in the outbox.
+      if ((env.PUBLIC_INTAKE_WRITE_MODE !== "mongo" && !env.PUBLIC_INTAKE_MONGO_MIRROR_ENABLED) || !isMongoConfigured()) {
+        throw new Error("MongoDB public-intake mirroring is not available");
+      }
+      await mirrorPublicIntakeRequestToMongo(mongoMirrorInput);
+      await enqueuePublicIntakeReceiptEmails({
+        requestId,
+        investorEmail: input.email.trim().toLowerCase(),
+        internalRecipients,
+      }, "live");
+      return { requestId, assigneeEmail };
+    } catch (error) {
+      console.error("[public-intake] Render receipt delivery preparation failed; using the legacy sender", {
+        requestId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   const deliveryResults = await Promise.allSettled([
@@ -204,10 +373,67 @@ export async function createPublicInvestorIntake(payload: unknown, context: Inta
     console.warn("[public-intake] One or more email deliveries failed:", failedDeliveries.length);
   }
 
+  mirrorPublicIntakeReceiptEmailsToOutboxSafely({
+    requestId,
+    investorEmail: input.email.trim().toLowerCase(),
+    internalRecipients,
+  });
+
   return {
     requestId,
     assigneeEmail,
   };
+}
+
+function mirrorPublicIntakeReceiptEmailsToOutboxSafely(input: {
+  requestId: string;
+  investorEmail: string;
+  internalRecipients: Array<{ userId?: string | null; email: string; role: string }>;
+}) {
+  if (!env.PUBLIC_INTAKE_EMAIL_OUTBOX_SHADOW_ENABLED || !isMongoConfigured()) return;
+
+  void enqueuePublicIntakeReceiptEmails(input, "shadow").catch((error) => {
+    console.warn("[public-intake] Failed to mirror receipt email intent to MongoDB", {
+      requestId: input.requestId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+async function enqueuePublicIntakeReceiptEmails(input: {
+  requestId: string;
+  investorEmail: string;
+  internalRecipients: Array<{ userId?: string | null; email: string; role: string }>;
+}, deliveryMode: "shadow" | "live") {
+  const jobs = [
+    ...input.internalRecipients.map((recipient) => ({
+      recipient: recipient.email,
+      recipientKind: "internal",
+      recipientRole: recipient.role,
+      dedupeKey: `public_intake_receipt:${deliveryMode}:${input.requestId}:internal:${recipient.userId ?? recipient.role}`,
+    })),
+    {
+      recipient: input.investorEmail,
+      recipientKind: "investor",
+      recipientRole: null,
+      dedupeKey: `public_intake_receipt:${deliveryMode}:${input.requestId}:investor`,
+    },
+  ];
+
+  const results = await Promise.allSettled(jobs.map((job) => enqueueNotificationDelivery({
+    notificationType: "public_intake_receipt",
+    channel: "email",
+    deliveryMode,
+    recipient: job.recipient,
+    payload: {
+      requestId: input.requestId,
+      recipientKind: job.recipientKind,
+      recipientRole: job.recipientRole,
+    },
+    dedupeKey: job.dedupeKey,
+  })));
+  const failed = results.filter((result) => result.status === "rejected").length;
+  if (failed > 0) throw new Error(`Failed to enqueue ${failed} public-intake receipt email job(s)`);
 }
 
 export async function sendPublicIntakeOtp(payload: unknown) {
@@ -224,24 +450,12 @@ export async function sendPublicIntakeOtp(payload: unknown) {
   const codeHash = hashPublicIntakeOtpCode(otpCode);
   const expiresAt = createOtpExpiryDate();
 
-  await adminSupabase
-    .from("public_intake_otp_codes")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("phone", codeTarget)
-    .is("consumed_at", null);
-
-  const { error: insertError } = await adminSupabase.from("public_intake_otp_codes").insert({
+  await storePublicIntakeOtp({
     phone: codeTarget,
     email: emailTarget,
-    code_hash: codeHash,
-    attempt_count: 0,
-    max_attempts: getOtpMaxAttempts(),
-    expires_at: expiresAt,
+    codeHash,
+    expiresAt,
   });
-
-  if (insertError) {
-    throw new Error(`Failed to create OTP record: ${insertError.message}`);
-  }
 
   const deliveryTasks: Promise<unknown>[] = [];
   const channels: string[] = [];
@@ -292,61 +506,35 @@ export async function verifyPublicIntakeOtp(payload: unknown) {
   assertConsentConfigured();
   const normalizedCode = normalizeOtp(input.code);
 
-  const { data: record, error } = await adminSupabase
-    .from("public_intake_otp_codes")
-    .select("*")
-    .eq("phone", codeTarget)
-    .is("consumed_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
+  const { record, storage } = await getActivePublicIntakeOtp(codeTarget);
 
   if (!record) {
     throw new Error("No active verification code was found");
   }
 
-  const typedRecord = record as {
-    id: string;
-    phone: string;
-    email: string | null;
-    code_hash: string;
-    attempt_count: number;
-    max_attempts: number;
-    expires_at: string;
-    consumed_at: string | null;
-    created_at: string;
-  };
-
-  if (isOtpExpired(typedRecord)) {
+  if (isOtpExpired(record)) {
     throw new Error("Verification code has expired");
   }
 
-  if (isOtpConsumed(typedRecord)) {
+  if (isOtpConsumed(record)) {
     throw new Error("Verification code has already been used");
   }
 
-  if (isOtpAttemptsExceeded(typedRecord)) {
+  if (isOtpAttemptsExceeded(record)) {
     throw new Error("Verification attempts exceeded");
   }
 
-  const matches = verifyPublicIntakeOtpCode(normalizedCode, typedRecord);
+  const matches = verifyPublicIntakeOtpCode(normalizedCode, record);
 
   if (!matches) {
-    await adminSupabase
-      .from("public_intake_otp_codes")
-      .update({ attempt_count: typedRecord.attempt_count + 1 })
-      .eq("id", typedRecord.id);
+    await incrementPublicIntakeOtpAttempt(record, storage);
     throw new Error("Verification failed");
   }
 
-  await adminSupabase
-    .from("public_intake_otp_codes")
-    .update({ consumed_at: new Date().toISOString() })
-    .eq("id", typedRecord.id);
+  const consumed = await consumePublicIntakeOtp(record, storage);
+  if (!consumed) {
+    throw new Error("Verification code has already been used");
+  }
 
   return {
     message: "Phone number verified",
@@ -354,9 +542,112 @@ export async function verifyPublicIntakeOtp(payload: unknown) {
   };
 }
 
+type OtpStorage = "mongo" | "supabase";
+
+async function storePublicIntakeOtp(input: {
+  phone: string;
+  email: string | null;
+  codeHash: string;
+  expiresAt: string;
+}) {
+  if (env.PUBLIC_INTAKE_OTP_STORAGE_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      await createPublicIntakeOtpInMongo({
+        phone: input.phone,
+        email: input.email,
+        codeHash: input.codeHash,
+        maxAttempts: getOtpMaxAttempts(),
+        expiresAt: input.expiresAt,
+      });
+      return;
+    } catch (error) {
+      console.warn("[public-intake.otp] MongoDB OTP write failed; falling back to Supabase", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("phone", input.phone)
+    .is("consumed_at", null);
+
+  const { error } = await adminSupabase.from("public_intake_otp_codes").insert({
+    phone: input.phone,
+    email: input.email,
+    code_hash: input.codeHash,
+    attempt_count: 0,
+    max_attempts: getOtpMaxAttempts(),
+    expires_at: input.expiresAt,
+  });
+
+  if (error) {
+    throw new Error(`Failed to create OTP record: ${error.message}`);
+  }
+}
+
+async function getActivePublicIntakeOtp(phone: string): Promise<{ record: PublicIntakeOtpRecord | null; storage: OtpStorage }> {
+  if (env.PUBLIC_INTAKE_OTP_STORAGE_MODE === "mongo" && isMongoConfigured()) {
+    try {
+      return { record: await getLatestActivePublicIntakeOtpFromMongo(phone), storage: "mongo" };
+    } catch (error) {
+      console.warn("[public-intake.otp] MongoDB OTP read failed; falling back to Supabase", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_otp_codes")
+    .select("*")
+    .eq("phone", phone)
+    .is("consumed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return { record: data as PublicIntakeOtpRecord | null, storage: "supabase" };
+}
+
+async function incrementPublicIntakeOtpAttempt(record: PublicIntakeOtpRecord, storage: OtpStorage) {
+  if (storage === "mongo") {
+    await incrementPublicIntakeOtpAttemptInMongo(record);
+    return;
+  }
+
+  await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ attempt_count: record.attempt_count + 1 })
+    .eq("id", record.id);
+}
+
+async function consumePublicIntakeOtp(record: PublicIntakeOtpRecord, storage: OtpStorage) {
+  if (storage === "mongo") {
+    return consumePublicIntakeOtpInMongo(record);
+  }
+
+  const { data, error } = await adminSupabase
+    .from("public_intake_otp_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("id", record.id)
+    .is("consumed_at", null)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data);
+}
+
 async function resolveAssigneeEmail(assigneeUserId: string, fallbackEmail?: string | null) {
   if (fallbackEmail) {
     return fallbackEmail;
+  }
+
+  if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo") {
+    if (!isMongoConfigured()) throw new Error("MongoDB is required for Mongo-primary staff directory reads");
+    return (await getStaffContactFromMongo(assigneeUserId))?.email?.trim() ?? null;
   }
 
   const { data, error } = await adminSupabase.auth.admin.listUsers();
@@ -378,6 +669,34 @@ async function resolveInternalRecipients(args: {
   assigneeEmail: string | null;
 }) {
   const recipients = new Map<string, InternalPublicIntakeRecipient>();
+
+  if (env.STAFF_DIRECTORY_MONGO_READ_MODE === "mongo") {
+    if (!isMongoConfigured()) throw new Error("MongoDB is required for Mongo-primary staff directory reads");
+    const contacts = await listActiveStaffContactsByRoles([
+      "investment_manager",
+      "accountant",
+      "general_manager",
+      "super_admin",
+    ]);
+    const assignee = contacts.find((contact) => contact.userId === args.assigneeUserId);
+    const assigneeEmail = args.assigneeEmail?.trim().toLowerCase() ?? assignee?.email?.trim().toLowerCase() ?? null;
+    if (assigneeEmail) {
+      recipients.set(`manager:${assigneeEmail}`, {
+        role: "manager",
+        userId: args.assigneeUserId,
+        email: assigneeEmail,
+      });
+    }
+
+    for (const contact of contacts) {
+      const email = contact.email?.trim().toLowerCase();
+      if (!email) continue;
+      const role = mapRecipientRoleFromRoles(contact.roles);
+      recipients.set(`${role}:${email}`, { role, userId: contact.userId, email });
+    }
+    return Array.from(recipients.values());
+  }
+
   const userLookup = await resolveUserLookup();
 
   const assigneeEmail = args.assigneeEmail?.trim().toLowerCase() ?? null;
@@ -448,6 +767,12 @@ function mapRecipientRole(role?: string | null): "manager" | "general_manager" |
     default:
       return "manager";
   }
+}
+
+function mapRecipientRoleFromRoles(roles: string[]): "manager" | "general_manager" | "ceo" {
+  if (roles.includes("super_admin")) return "ceo";
+  if (roles.includes("general_manager")) return "general_manager";
+  return "manager";
 }
 
 async function resolveUserLookup() {
