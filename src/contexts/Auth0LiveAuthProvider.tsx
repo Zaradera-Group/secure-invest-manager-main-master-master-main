@@ -14,6 +14,7 @@ import { auth0LiveConfig } from '@/lib/auth0Live';
 
 type Auth0LiveAuthProviderProps = Readonly<{ children: ReactNode }>;
 const AUTH_API_URL = import.meta.env.VITE_CERTIFICATE_API_URL?.trim().replace(/\/+$/, '');
+const AUTH_PROVIDER_STORAGE_KEY = 'auth:provider';
 
 function isMfaRequired(role: AppRole | null) {
   return role === 'investment_manager'
@@ -69,11 +70,13 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
 
   useEffect(() => {
     if (!isAuthenticated) {
+      globalThis.localStorage?.removeItem(AUTH_PROVIDER_STORAGE_KEY);
       setBackendAccessTokenProvider(null);
       setSession(null);
       return;
     }
 
+    globalThis.localStorage?.setItem(AUTH_PROVIDER_STORAGE_KEY, 'auth0');
     setBackendAccessTokenProvider(getToken);
     return () => setBackendAccessTokenProvider(null);
   }, [getToken, isAuthenticated]);
