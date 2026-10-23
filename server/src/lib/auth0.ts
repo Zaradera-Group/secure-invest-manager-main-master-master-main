@@ -19,6 +19,23 @@ export class Auth0AuthenticationError extends Error {}
 
 export const isAuth0Enabled = () => env.AUTH_MODE === "dual" || env.AUTH_MODE === "auth0";
 
+// This is only used to choose the verifier in dual mode. The token is still
+// fully signature- and claim-verified by getUserFromAuth0BearerToken.
+export const isLikelyAuth0Token = (token: string) => {
+  if (!env.AUTH0_ISSUER_BASE_URL) return false;
+
+  try {
+    const encodedPayload = token.split(".")[1];
+    if (!encodedPayload) return false;
+
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as { iss?: unknown };
+    const issuer = typeof payload.iss === "string" ? payload.iss.replace(/\/+$/, "") : "";
+    return issuer === env.AUTH0_ISSUER_BASE_URL;
+  } catch {
+    return false;
+  }
+};
+
 export const getUserFromAuth0BearerToken = async (token: string): Promise<AuthenticatedUser> => {
   if (!isAuth0Enabled() || !env.AUTH0_ISSUER_BASE_URL || !env.AUTH0_AUDIENCE) {
     throw new Auth0AuthenticationError("Auth0 authentication is not configured");
