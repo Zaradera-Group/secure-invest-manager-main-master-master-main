@@ -7,6 +7,7 @@ const TOAST_LIMIT = 1;
 const TOAST_REMOVE_DELAY = 1000000;
 const ERROR_TOAST_SIGN_OUT_DELAY = 1200;
 const REMOTE_SIGN_OUT_STORAGE_KEY = 'auth:force-signout';
+const AUTH_PROVIDER_STORAGE_KEY = 'auth:provider';
 
 type ToasterToast = ToastProps & {
   id: string;
@@ -145,6 +146,10 @@ type Toast = Omit<ToasterToast, "id">;
 
 async function forceSignOutAfterErrorToast() {
   if (isErrorSignOutInProgress) {
+    return;
+  }
+
+  if (globalThis.localStorage?.getItem(AUTH_PROVIDER_STORAGE_KEY) === 'auth0') {
     return;
   }
 
