@@ -9,6 +9,9 @@ authRouter.post("/access/approved-email", getApprovedEmailAccess);
 authRouter.post("/access/approved-user", getApprovedUserAccess);
 
 authRouter.get("/me", requireMappedDualAuth, (request, response) => {
+  response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  response.setHeader("Pragma", "no-cache");
+  response.setHeader("Expires", "0");
   response.json({
     id: request.authUser!.id,
     email: request.authUser!.email || null,
