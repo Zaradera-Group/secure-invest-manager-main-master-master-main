@@ -1,11 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
-import { Auth0AuthenticationError, getUserFromAuth0BearerToken, isAuth0Enabled } from "../lib/auth0.js";
+import { getUserFromAuth0BearerToken, isAuth0Enabled, isLikelyAuth0Token } from "../lib/auth0.js";
 import { getUserFromBearerToken, isSupabaseTimeoutError } from "../lib/supabase.js";
 import { env } from "../config/env.js";
-import {
-  Auth0StaffAccountMappingError,
-  Auth0StaffAccountService,
-} from "../services/auth0-staff-account.service.js";
+import { Auth0StaffAccountService } from "../services/auth0-staff-account.service.js";
 import type { AppRole } from "../types/certificates.js";
 
 const auth0StaffAccounts = new Auth0StaffAccountService();
@@ -56,19 +53,13 @@ export const requireDualAuth = async (request: Request, response: Response, next
       return;
     }
 
-    if (isAuth0Enabled()) {
+    if (isAuth0Enabled() && isLikelyAuth0Token(token)) {
       try {
         request.authUser = await getUserFromAuth0BearerToken(token);
         next();
         return;
       } catch (error) {
-        if (!(error instanceof Auth0AuthenticationError)) {
-          throw error;
-        }
-
-        if (env.AUTH_MODE === "auth0") {
-          throw error;
-        }
+        throw error;
       }
     }
 
@@ -99,24 +90,14 @@ export const requireMappedDualAuth = async (request: Request, response: Response
       return;
     }
 
-    if (isAuth0Enabled()) {
+    if (isAuth0Enabled() && isLikelyAuth0Token(token)) {
       try {
         const auth0User = await getUserFromAuth0BearerToken(token);
         request.authUser = await auth0StaffAccounts.resolveMappedActiveUser(auth0User);
         next();
         return;
       } catch (error) {
-        if (error instanceof Auth0StaffAccountMappingError) {
-          throw error;
-        }
-
-        if (!(error instanceof Auth0AuthenticationError)) {
-          throw error;
-        }
-
-        if (env.AUTH_MODE === "auth0") {
-          throw error;
-        }
+        throw error;
       }
     }
 
