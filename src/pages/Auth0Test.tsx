@@ -48,6 +48,7 @@ function Auth0TestSession() {
         authorizationParams: { audience: auth0TestConfig.audience },
       });
       const response = await fetch(`${apiUrl}/auth/me`, {
+        cache: 'no-store',
         headers: { Authorization: `Bearer ${token}` },
       });
       const payload = await response.json().catch(() => null) as RenderIdentity | { message?: string } | null;

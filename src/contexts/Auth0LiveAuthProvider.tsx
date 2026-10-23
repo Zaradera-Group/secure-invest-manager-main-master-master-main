@@ -106,6 +106,7 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
       try {
         const token = await getToken();
         const response = await fetch(`${AUTH_API_URL}/auth/me`, {
+          cache: 'no-store',
           headers: { Authorization: `Bearer ${token}` },
         });
         const payload = await response.json().catch(() => null) as { role?: string; message?: string } | null;
