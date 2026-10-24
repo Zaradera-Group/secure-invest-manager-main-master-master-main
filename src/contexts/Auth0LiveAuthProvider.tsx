@@ -55,7 +55,9 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
   } = useAuth0();
   const [role, setRole] = useState<AppRole | null>(null);
   const [accessIssue, setAccessIssue] = useState<string | null>(null);
-  const [loadingIdentity, setLoadingIdentity] = useState(false);
+  // Keep protected routes in their loading state until the first backend identity check finishes.
+  // Auth0 can become authenticated one render before /auth/me has populated our application session.
+  const [loadingIdentity, setLoadingIdentity] = useState(true);
   const [session, setSession] = useState<AppAuthSession | null>(null);
   const user = useMemo(() => toAppUser(auth0User), [auth0User]);
   const emailVerified = Boolean(auth0User?.email_verified);
