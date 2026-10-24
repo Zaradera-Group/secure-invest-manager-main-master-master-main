@@ -20,7 +20,7 @@ export const notificationsRouter = Router();
 
 notificationsRouter.use(requireWorkflowAuth);
 
-const staffRoles = ["investment_manager", "accountant", "general_manager", "admin", "super_admin"] as const;
+const staffRoles = ["investment_manager", "accountant", "general_manager", "admin", "super_admin", "software_engineer"] as const;
 
 notificationsRouter.get("/dashboard", requireRole(...staffRoles), getDashboardNotifications);
 notificationsRouter.get("/dashboard/unread-count", requireRole(...staffRoles), getUnreadDashboardNotificationCount);

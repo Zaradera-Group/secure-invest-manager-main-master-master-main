@@ -15,6 +15,15 @@ import { requireRole, requireWorkflowAuth } from "../middleware/auth.js";
 
 export const investorsRouter = Router();
 
+const investorReadRoles = [
+  "investment_manager",
+  "accountant",
+  "general_manager",
+  "admin",
+  "super_admin",
+  "software_engineer",
+] as const;
+
 investorsRouter.use(requireWorkflowAuth);
 
 investorsRouter.post(
@@ -25,37 +34,37 @@ investorsRouter.post(
 
 investorsRouter.get(
   "/",
-  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  requireRole(...investorReadRoles),
   listInvestors,
 );
 
 investorsRouter.get(
   "/dashboard/portfolio-summary",
-  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  requireRole(...investorReadRoles),
   getDashboardPortfolioSummary,
 );
 
 investorsRouter.get(
   "/dashboard/investment-types",
-  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  requireRole(...investorReadRoles),
   getDashboardInvestmentTypeSummary,
 );
 
 investorsRouter.get(
   "/dashboard/upcoming-maturities",
-  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  requireRole(...investorReadRoles),
   getDashboardUpcomingMaturities,
 );
 
 investorsRouter.get(
   "/maturity-alerts",
-  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  requireRole(...investorReadRoles),
   getMaturityAlerts,
 );
 
 investorsRouter.get(
   "/:id",
-  requireRole("investment_manager", "accountant", "general_manager", "admin", "super_admin"),
+  requireRole(...investorReadRoles),
   getInvestor,
 );
 
