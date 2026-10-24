@@ -16,5 +16,7 @@ export const isAuth0LiveConfigured = Boolean(
 export const auth0LiveConfig = {
   ...requiredAuth0LiveConfig,
   audience: requiredAuth0LiveConfig.audience,
-  redirectUri: `${globalThis.location.origin}/login`,
+  // Return directly to the protected dashboard after Auth0 completes MFA.
+  // ProtectedRoute keeps the dashboard in a loading state while /auth/me validates the session.
+  redirectUri: `${globalThis.location.origin}/dashboard`,
 };
