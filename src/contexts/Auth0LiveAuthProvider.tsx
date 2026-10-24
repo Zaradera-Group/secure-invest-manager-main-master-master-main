@@ -128,6 +128,13 @@ export function Auth0LiveAuthProvider({ children }: Auth0LiveAuthProviderProps) 
           setSession({ access_token: token, user });
           setRole(nextRole);
           setAccessIssue(null);
+
+          // The Auth0 callback lands on /login. Once the backend has accepted the
+          // identity, complete the handoff explicitly so a router timing edge case
+          // cannot leave the authenticated user on the login screen.
+          if (globalThis.location.pathname === '/login') {
+            globalThis.location.replace('/dashboard');
+          }
         }
       } catch (error) {
         if (!cancelled) {
