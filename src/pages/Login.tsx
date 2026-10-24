@@ -56,7 +56,7 @@ export default function Login() {
   const [turnstileStatus, setTurnstileStatus] = useState<string | null>(null);
   const [mathChallenge, setMathChallenge] = useState<MathChallenge>(() => createMathChallenge());
   const [mathAnswer, setMathAnswer] = useState('');
-  const { provider, signIn, signUp, role, accessIssue, signupEnabled } = useAuth();
+  const { provider, session, signIn, signUp, role, accessIssue, signupEnabled } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
@@ -70,6 +70,12 @@ export default function Login() {
   const isMathVerificationPending =
     mathChallengeEnabled && Number(mathAnswer.trim()) !== mathChallenge.answer;
   const isSubmitDisabled = loading || isHumanVerificationPending || isMathVerificationPending;
+
+  useEffect(() => {
+    if (provider === 'auth0' && session && globalThis.location.pathname === '/login') {
+      navigate(getDefaultDashboardPath(role), { replace: true });
+    }
+  }, [navigate, provider, role, session]);
 
   useEffect(() => {
     const url = new URL(globalThis.location.href);
